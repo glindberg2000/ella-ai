@@ -1,0 +1,40 @@
+<html>
+
+<head>
+    <title>Test Page</title>
+</head>
+
+<body>
+    <h2>Headers</h2>
+    <p>[Your headers will be listed here]</p>
+    <h2>Cookies</h2>
+    <p>[Your cookies will be listed here]</p>
+
+    <script>
+        var vapiInstance = null;
+        const assistant = "7d444afe-1c8b-4708-8f45-5b6592e60b47"; // Substitute with your assistant ID
+        const apiKey = "c87ea74e-bebf-4196-aebb-fbd77d5f28c0"; // Substitute with your Public key from Vapi Dashboard.
+        const buttonConfig = {}; // Modify this as required
+
+        (function (d, t) {
+            var g = document.createElement(t),
+                s = d.getElementsByTagName(t)[0];
+            g.src =
+                "https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js";
+            g.defer = true;
+            g.async = true;
+            s.parentNode.insertBefore(g, s);
+
+            g.onload = function () {
+                vapiInstance = window.vapiSDK.run({
+                    apiKey: apiKey, // mandatory
+                    assistant: assistant, // mandatory
+                    config: buttonConfig, // optional
+                });
+            };
+        })(document, "script");
+
+    </script>
+</body>
+
+</html>
