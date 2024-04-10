@@ -371,69 +371,69 @@ async def on_message(message: cl.Message):
             root_step.output = assistant_message
 
 
-async def stream_assistant_messages(
-    agent_id: str, message: str, user_api: ExtendedRESTClient
-) -> AsyncGenerator[str, None]:
-    print("Debug: Inside stream_assistant_messages function")  # Debugging
-    async for part in user_api.send_message_to_agent_streamed(agent_id, message):
-        print(f"Debug: Received part from memgpt: {part}")  # Debugging
-        if part.startswith("data: "):
-            data_content = part[6:]  # Extract JSON content from the SSE message
-            print(f"Debug: Extracted data content: {data_content}")  # Debugging
-            part_dict = json.loads(data_content)  # Convert string to dictionary
-            if "assistant_message" in part_dict:
-                # Reformat and yield each assistant message maintaining SSE format
-                formatted_message = f"data: {json.dumps({'assistant_message': part_dict['assistant_message']})}\n\n"
-                print(
-                    f"Debug: Yielding formatted message: {formatted_message}"
-                )  # Debugging
-                yield formatted_message
+# async def stream_assistant_messages(
+#     agent_id: str, message: str, user_api: ExtendedRESTClient
+# ) -> AsyncGenerator[str, None]:
+#     print("Debug: Inside stream_assistant_messages function")  # Debugging
+#     async for part in user_api.send_message_to_agent_streamed(agent_id, message):
+#         print(f"Debug: Received part from memgpt: {part}")  # Debugging
+#         if part.startswith("data: "):
+#             data_content = part[6:]  # Extract JSON content from the SSE message
+#             print(f"Debug: Extracted data content: {data_content}")  # Debugging
+#             part_dict = json.loads(data_content)  # Convert string to dictionary
+#             if "assistant_message" in part_dict:
+#                 # Reformat and yield each assistant message maintaining SSE format
+#                 formatted_message = f"data: {json.dumps({'assistant_message': part_dict['assistant_message']})}\n\n"
+#                 print(
+#                     f"Debug: Yielding formatted message: {formatted_message}"
+#                 )  # Debugging
+#                 yield formatted_message
 
 
-@app.post("/api/memgpt/chat/completions")
-async def custom_llm_openai_sse_handler(request: Request) -> StreamingResponse:
-    print("Debug: Endpoint hit /api/memgpt/chat/completions")  # Debugging
-    user_api_key = DEFAULT_API_KEY
-    agent_id = DEFAULT_AGENT_ID
-    request_data = await request.json()
-    message = request_data.get("messages", [{}])[-1].get("content", "")
-    print(f"Debug: Received message: {message}")  # Debugging
+# @app.post("/api/memgpt/chat/completions")
+# async def custom_llm_openai_sse_handler(request: Request) -> StreamingResponse:
+#     print("Debug: Endpoint hit /api/memgpt/chat/completions")  # Debugging
+#     user_api_key = DEFAULT_API_KEY
+#     agent_id = DEFAULT_AGENT_ID
+#     request_data = await request.json()
+#     message = request_data.get("messages", [{}])[-1].get("content", "")
+#     print(f"Debug: Received message: {message}")  # Debugging
 
-    user_api = ExtendedRESTClient(
-        base_url, user_api_key
-    )  # Initialize with your actual base_url and user_api_key
+#     user_api = ExtendedRESTClient(
+#         base_url, user_api_key
+#     )  # Initialize with your actual base_url and user_api_key
 
-    try:
-        stream = stream_assistant_messages(agent_id, message, user_api)
-        return StreamingResponse(stream, media_type="text/event-stream")
-    except Exception as e:
-        print(f"Error: {e}")  # Debugging
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-import asyncio
-import json
+#     try:
+#         stream = stream_assistant_messages(agent_id, message, user_api)
+#         return StreamingResponse(stream, media_type="text/event-stream")
+#     except Exception as e:
+#         print(f"Error: {e}")  # Debugging
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/dummy/chat/completions")
-async def dummy_llm_openai_sse_handler(request: Request):
-    request_data = await request.json()
-    print("Debug: Endpoint hit /api/dummy/chat/completions")  # Debugging
-    print(request_data)
+# import asyncio
+# import json
 
-    async def message_stream():
-        # First message
-        yield f"data: {json.dumps({'assistant_message': 'Processing your request, please hold on.'})}\n\n"
-        await asyncio.sleep(0.1)  # Wait for 1 seconds
 
-        # Second message
-        yield f"data: {json.dumps({'assistant_message': 'Still working on your request, almost there...'})}\n\n"
-        await asyncio.sleep(0.15)  # Wait for 1 more seconds
+# @app.post("/api/dummy/chat/completions")
+# async def dummy_llm_openai_sse_handler(request: Request):
+#     request_data = await request.json()
+#     print("Debug: Endpoint hit /api/dummy/chat/completions")  # Debugging
+#     print(request_data)
 
-        # Final message
-        yield f"data: {json.dumps({'assistant_message': 'Request processed, thank you for waiting!'})}\n\n"
+#     async def message_stream():
+#         # First message
+#         yield f"data: {json.dumps({'assistant_message': 'Processing your request, please hold on.'})}\n\n"
+#         await asyncio.sleep(0.1)  # Wait for 1 seconds
 
-    return StreamingResponse(message_stream(), media_type="text/event-stream")
+#         # Second message
+#         yield f"data: {json.dumps({'assistant_message': 'Still working on your request, almost there...'})}\n\n"
+#         await asyncio.sleep(0.15)  # Wait for 1 more seconds
+
+#         # Final message
+#         yield f"data: {json.dumps({'assistant_message': 'Request processed, thank you for waiting!'})}\n\n"
+
+#     return StreamingResponse(message_stream(), media_type="text/event-stream")
 
 
 # @cl.action_callback("action_button")

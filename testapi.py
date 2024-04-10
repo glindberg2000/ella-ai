@@ -248,15 +248,16 @@ async def stream_response_openai():
     fastdummy = "http://localhost:9000/api/streaming-endpoint"
     fastopenai = "http://localhost:9000/stream-openai"
     faststreamtest = "http://localhost:9000/openai-sse/chat/completions"
+    memgptstreamtest = "http://localhost:9000/memgpt-sse/chat/completions"
 
-    url = faststreamtest
+    url = memgptstreamtest
     # Payload following OpenAI's API requirements
     payload = {
         "model": "gpt-3.5-turbo",
         "stream": True,  # Enable streaming for SSE response
         "messages": [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Tell me a joke."}
+            {"role": "user", "content": "what other ideas do you have about that?"}
         ]
     }
 
@@ -266,16 +267,16 @@ async def stream_response_openai():
     }
 
     # Increase the timeout (e.g., to 30 seconds)
-    timeout = httpx.Timeout(7.5, connect=7.5)
+    timeout = httpx.Timeout(10, connect=10)
     # Enable streaming for the HTTPX client
     async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
         response = await client.post(url, json=payload)  # Send POST request
         print(response)
         async for line in response.aiter_lines():
             # Process each line received in the response
-            #print ('raw line:',line)
-            if line.startswith("data:"):
-                print("Received streamed data from:", url, line[len("data: "):])
+            print (line)
+            # if line.startswith("data:"):
+            #     print("Received streamed data from:", url, line[len("data: "):])
 
 # Running the test client for OpenAI
 print('running test....')
