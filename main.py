@@ -4,8 +4,12 @@ import logging
 logging.basicConfig(level=logging.INFO)
 import json
 import os
-import time
 from typing import Any, AsyncGenerator, Dict, Optional
+
+import jwt
+# Your secret key for signing the JWT - keep it secure and do not expose it
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
 
 from chainlit.server import app
 from dotenv import load_dotenv
@@ -17,11 +21,23 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
-from memgpt.client.admin import Admin as AdminRESTClient
+
 
 import chainlit as cl
+from chainlit.user import User
+from chainlit.user_session import user_session
+
+
 from ella_memgpt.extendedRESTclient import ExtendedRESTClient
-#from ella_memgpt.memgpt_api import MemGPTAPI
+from ella_memgpt.memgpt_admin import create_memgpt_user_and_api_key, manage_agents
+
+# Import the database management functions from db_manager module
+from ella_dbo.db_manager import (
+    create_connection,
+    create_table,
+    get_memgpt_user_id_and_api_key,
+    upsert_user,
+)
 from openai_proxy import router as openai_proxy_router
 
 app.include_router(openai_proxy_router, prefix="/api")
@@ -53,60 +69,8 @@ DEFAULT_AGENT_CONFIG = {
 }
 CHATBOT_NAME = "Ella"
 
-
-@app.get("/hello")
-def hello(request: Request):
-    print(request.headers)
-    return HTMLResponse("Hello World")
-
-
-# from chainlit.server import app
-# from fastapi import Request
-# from fastapi.responses import (
-#     HTMLResponse,
-# )
-
 from chainlit.context import init_http_context
 
-import chainlit as cl
-
-
-@app.get("/hello2")
-async def hello(
-    request: Request,
-):
-    init_http_context()
-    await cl.Message(content="Hello World whith context").send()
-    return HTMLResponse("Hello World with context")
-
-
-@app.get("/test-page", response_class=HTMLResponse)
-async def test_page(request: Request):
-    headers = request.headers
-    cookies = request.cookies
-
-    headers_list = "<br>".join([f"{key}: {value}" for key, value in headers.items()])
-    cookies_list = "<br>".join([f"{key}: {value}" for key, value in cookies.items()])
-
-    html_content = f"""
-    <html>
-        <head>
-            <title>Test Page</title>
-        </head>
-        <body>
-            <h2>Headers</h2>
-            <p>{headers_list}</p>
-            <h2>Cookies</h2>
-            <p>{cookies_list}</p>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
-
-
-@app.get("/new-test-page")
-async def new_test_page():
-    return FileResponse("public/test_page.html")
 
 
 @app.get("/voice-chat")
@@ -114,124 +78,6 @@ async def new_test_page():
     return RedirectResponse(
         url="https://vapi.ai/?demo=true&shareKey=c87ea74e-bebf-4196-aebb-fbd77d5f28c0&assistantId=7d444afe-1c8b-4708-8f45-5b6592e60b47"
     )
-
-
-@app.post("/test/post")
-async def test_post(request: Request):
-    data = await request.json()  # Attempt to read the JSON body of the request
-    print("Received POST request with data:", data)  # Log to console
-
-    # Construct a simple response
-    response = {
-        "status": "success",
-        "message": "POST request received.",
-        "received_data": data,
-    }
-
-    return JSONResponse(content=response)
-
-
-from fastapi import FastAPI, Request, Response
-
-
-@app.get("/protected-page", response_class=HTMLResponse)
-def protected_page():
-    print("trying protected page....")
-    try:
-        # Attempt to retrieve the Chainlit user session
-        app_user = user_session.get("user")
-        # app_user = None
-
-        # Print the user session data to the console for debugging
-        logger.error(f"User session data: {app_user}")
-        print(f"User session data: {app_user}")
-
-        if app_user and "user" in app_user.metadata.get("roles", []):
-            # If the user is authenticated and authorized, return a simple HTML page
-            return HTMLResponse(
-                content=f"""
-            <html>
-                <head>
-                    <title>Protected Page</title>
-                </head>
-                <body>
-                    <h1>Welcome, {app_user.metadata['name']}</h1>
-                    <p>This is a protected page.</p>
-                </body>
-            </html>
-            """
-            )
-        else:
-            # User not authorized to access this page
-            logger.info("Access denied: User not authorized or session missing.")
-            return HTMLResponse(
-                content="""
-            <html>
-                <head>
-                    <title>Access Denied</title>
-                </head>
-                <body>
-                    <h1>Access Denied</h1>
-                    <p>You must be a valid user to view this page.</p>
-                </body>
-            </html>
-            """,
-                status_code=403,
-            )
-    except Exception as e:
-        # Handle unexpected errors
-        logger.error(f"Authentication error: {e}")
-        raise HTTPException(
-            status_code=401, detail="Authentication error. Please try again."
-        )
-
-
-from datetime import datetime, timedelta
-from typing import Dict
-
-import jwt
-
-# Your secret key for signing the JWT - keep it secure and do not expose it
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = "HS256"
-
-
-def generate_jwt_for_user(user_details: Dict[str, any]) -> str:
-    """
-    Generates a JWT for an authenticated user with the provided user details.
-
-    :param user_details: A dictionary containing details about the user.
-    :return: A JWT as a string.
-    """
-    # Define the token expiration time (e.g., 24 hours from now)
-    expiration_time = datetime.utcnow() + timedelta(hours=24)
-
-    # Define your JWT payload
-    payload = {"user_details": user_details, "exp": expiration_time}  # Expiration time
-
-    # Encode the JWT
-    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    return token
-
-
-import jwt
-from chainlit.user import User
-from chainlit.user_session import user_session
-
-
-def generate_jwt(user: User):
-    jwt_secret = SECRET_KEY
-    # Additional claims based on the user's profile or permissions
-    claims = {
-        "sub": user.identifier,
-        "name": user.metadata.get("name"),
-        "roles": user.metadata.get("roles"),
-    }
-    token = jwt.encode(claims, jwt_secret, algorithm="HS256")
-    # Store the token in the user's session for later validation
-    user_session.set("jwt_token", token)
-    print("token being set: ", token)
-    return token
 
 
 @cl.oauth_callback
@@ -248,6 +94,43 @@ def oauth_callback(
         "https://ella-ai/auth/roles", ["none"]
     )  # Assign 'none' as a default role
 
+    conn = create_connection()
+    create_table(conn)
+    roles_str = ", ".join(user_roles)
+    upsert_user(
+        conn,
+        auth0_user_id=auth0_user_id,
+        roles=roles_str,
+        email=user_email,
+        name=user_name,
+    )
+
+    # Check if the user has a MemGPT user ID and API key
+    memgpt_user_id, memgpt_user_api_key = get_memgpt_user_id_and_api_key(conn, auth0_user_id)
+
+   
+    # If the user does not have a MemGPT user ID or API key, create them, 
+    # we could update this to also just get the api key of the user
+    # Assuming you are checking if either ID or key is None and then calling the creation function
+    if not memgpt_user_id or not memgpt_user_api_key:
+        user_values = create_memgpt_user_and_api_key()  # This will return the dictionary with new keys
+        memgpt_user_id = user_values["memgpt_user_id"]  # Extract the user_id from the dictionary
+        memgpt_user_api_key = user_values["memgpt_user_api_key"]  # Extract the API key from the dictionary
+
+        # Update the user's MemGPT user ID and API key in the database
+        upsert_user(
+            conn,
+            auth0_user_id=auth0_user_id,
+            roles=roles_str,
+            email=user_email,
+            name=user_name,
+            memgpt_user_id=memgpt_user_id,
+            memgpt_user_api_key=memgpt_user_api_key,
+        )
+   
+    conn.close()
+
+    # Create the custom user object
     custom_user = cl.User(
         identifier=user_name,
         metadata={
@@ -255,11 +138,13 @@ def oauth_callback(
             "email": user_email,
             "name": user_name,
             "roles": user_roles,
-        },
+            "memgpt_user_id": memgpt_user_id,
+            "memgpt_user_api_key": memgpt_user_api_key,
+        }
     )
-    # user_session.set(identifier=user_name)
 
     return custom_user
+
 
 
 @cl.on_chat_start
@@ -371,84 +256,4 @@ async def on_message(message: cl.Message):
             root_step.output = assistant_message
 
 
-# async def stream_assistant_messages(
-#     agent_id: str, message: str, user_api: ExtendedRESTClient
-# ) -> AsyncGenerator[str, None]:
-#     print("Debug: Inside stream_assistant_messages function")  # Debugging
-#     async for part in user_api.send_message_to_agent_streamed(agent_id, message):
-#         print(f"Debug: Received part from memgpt: {part}")  # Debugging
-#         if part.startswith("data: "):
-#             data_content = part[6:]  # Extract JSON content from the SSE message
-#             print(f"Debug: Extracted data content: {data_content}")  # Debugging
-#             part_dict = json.loads(data_content)  # Convert string to dictionary
-#             if "assistant_message" in part_dict:
-#                 # Reformat and yield each assistant message maintaining SSE format
-#                 formatted_message = f"data: {json.dumps({'assistant_message': part_dict['assistant_message']})}\n\n"
-#                 print(
-#                     f"Debug: Yielding formatted message: {formatted_message}"
-#                 )  # Debugging
-#                 yield formatted_message
 
-
-# @app.post("/api/memgpt/chat/completions")
-# async def custom_llm_openai_sse_handler(request: Request) -> StreamingResponse:
-#     print("Debug: Endpoint hit /api/memgpt/chat/completions")  # Debugging
-#     user_api_key = DEFAULT_API_KEY
-#     agent_id = DEFAULT_AGENT_ID
-#     request_data = await request.json()
-#     message = request_data.get("messages", [{}])[-1].get("content", "")
-#     print(f"Debug: Received message: {message}")  # Debugging
-
-#     user_api = ExtendedRESTClient(
-#         base_url, user_api_key
-#     )  # Initialize with your actual base_url and user_api_key
-
-#     try:
-#         stream = stream_assistant_messages(agent_id, message, user_api)
-#         return StreamingResponse(stream, media_type="text/event-stream")
-#     except Exception as e:
-#         print(f"Error: {e}")  # Debugging
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
-# import asyncio
-# import json
-
-
-# @app.post("/api/dummy/chat/completions")
-# async def dummy_llm_openai_sse_handler(request: Request):
-#     request_data = await request.json()
-#     print("Debug: Endpoint hit /api/dummy/chat/completions")  # Debugging
-#     print(request_data)
-
-#     async def message_stream():
-#         # First message
-#         yield f"data: {json.dumps({'assistant_message': 'Processing your request, please hold on.'})}\n\n"
-#         await asyncio.sleep(0.1)  # Wait for 1 seconds
-
-#         # Second message
-#         yield f"data: {json.dumps({'assistant_message': 'Still working on your request, almost there...'})}\n\n"
-#         await asyncio.sleep(0.15)  # Wait for 1 more seconds
-
-#         # Final message
-#         yield f"data: {json.dumps({'assistant_message': 'Request processed, thank you for waiting!'})}\n\n"
-
-#     return StreamingResponse(message_stream(), media_type="text/event-stream")
-
-
-# @cl.action_callback("action_button")
-# async def on_action(action):
-#     await cl.Message(content=f"Executed {action.name} with value {action.value}").send()
-#     # Optionally remove the action button from the chatbot user interface
-#     await action.remove()
-
-# @cl.on_chat_start
-# async def start():
-#     # Sending multiple action buttons within a chatbot message
-#     actions = [
-#         cl.Action(name="action_button_1", value="value_1", description="Click me!"),
-#         cl.Action(name="action_button_2", value="value_2", description="Click me too!"),
-#         # Add more buttons as needed
-#     ]
-
-#     await cl.Message(content="Interact with these action buttons:", actions=actions).send()

@@ -278,9 +278,47 @@ async def stream_response_openai():
             # if line.startswith("data:"):
             #     print("Received streamed data from:", url, line[len("data: "):])
 
+import asyncio
+from ella_memgpt.extendedRESTclient import ExtendedRESTClient
+
+
+# Load environment variables from .env file
+load_dotenv()
+base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8283")
+master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
+openai_api_key = os.getenv("OPENAI_API_KEY", "defaultopenaikey")
+
+# Define default values
+DEFAULT_USER_ID = "d48465a1-8153-448d-9115-93fdaae4b290"
+DEFAULT_API_KEY = "sk-614ca012fa835acffa3879729c364124eba195fca46b190b"
+DEFAULT_AGENT_ID = "31b3722a-ebc1-418a-9056-4ef780d2f494"
+DEFAULT_AGENT_CONFIG = {
+    "name": "DefaultAgent5",
+    "preset": "memgpt_chat",
+    "human": "cs_phd",
+    "persona": "anna_pa",
+}
+CHATBOT_NAME = "Ella"
+
+async def test_streaming():
+
+    message = "This is a streaming. let me know if you recevive this one Anna."  # Define a test message
+
+    user_api_key = DEFAULT_API_KEY
+    agent_id = DEFAULT_AGENT_ID
+    user_api = ExtendedRESTClient(base_url, user_api_key)
+
+    async for streamed_response in user_api.send_message_to_agent_streamed(agent_id, message):
+        print(streamed_response)  # Print each chunk of streamed data
+
+# Run the test
+loop = asyncio.get_event_loop()
+loop.run_until_complete(test_streaming())
+
+
 # Running the test client for OpenAI
-print('running test....')
-asyncio.run(stream_response_openai())
+# print('running test....')
+# asyncio.run(stream_response_openai())
 
 
 

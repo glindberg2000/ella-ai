@@ -14,6 +14,7 @@ api_key = os.getenv("OPENAI_API_KEY", "defaultopenaikey")
 from fastapi import FastAPI, HTTPException, Request
 from openai import OpenAI
 from starlette.responses import StreamingResponse
+from ella_memgpt.extendedRESTclient import ExtendedRESTClient
 
 app = FastAPI()
 client = OpenAI()
@@ -65,6 +66,10 @@ async def custom_llm_openai_sse_handler(request: Request):
         print("not streaming output.")
         chat_completion = client.chat.completions.create(**request_data)
         return chat_completion.model_dump_json()
+
+
+
+
 
 
 # # Initialize HTTPX client globally if you're planning on making asynchronous HTTP requests
