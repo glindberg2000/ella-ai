@@ -26,16 +26,16 @@ class ExtendedRESTClient(RESTClient):
             "stream": True,
             "role": "user",
         }
-        if self.debug:
-            print(f"PAYLOAD: {payload}")
+        #if self.debug:
+            #print(f"PAYLOAD: {payload}")
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as response:
                 async for line in response.content:
                     decoded_line = line.decode("utf-8").strip()
                     if not decoded_line:  # Skip empty lines
                         continue
-                    if self.debug:
-                        print(f"Raw streamed data: {decoded_line}")
+                    # if self.debug:
+                    #     print(f"Raw streamed data: {decoded_line}")
                     # Directly yield lines that start with 'data: '
                     if decoded_line.startswith("data: "):
                         yield decoded_line + "\n\n"  # SSE requires an additional newline

@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+import uuid
 
 # Get the directory of the current file (__file__ is the path to the current script)
 current_dir = os.path.dirname(__file__)
@@ -20,58 +21,59 @@ def create_connection():
         print(e)
     return conn
 
-
 def create_table(conn):
     """Create tables to store user info, given a connection."""
     print('Creating table users...')
-    create_users_table_sql = """CREATE TABLE IF NOT EXISTS users (
-                                    id INTEGER PRIMARY KEY,
-                                    auth0_user_id TEXT NOT NULL,
-                                    memgpt_user_id TEXT,
-                                    memgpt_user_api_key TEXT,
-                                    email TEXT,
-                                    name TEXT,
-                                    roles TEXT,
-                                    default_agent_key TEXT  -- Store only the default agent key
-                                );"""
+    create_users_table_sql = """
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        auth0_user_id TEXT NOT NULL,
+        memgpt_user_id TEXT,
+        memgpt_user_api_key TEXT,
+        email TEXT,
+        name TEXT,
+        roles TEXT,
+        default_agent_key TEXT,  -- Store only the default agent key
+        vapi_assistant_id TEXT   -- Store field for storing VAPI assistant ID
+    );"""
     try:
         c = conn.cursor()
         c.execute(create_users_table_sql)
+        print("Table created successfully or already exists.")
     except sqlite3.Error as e:
-        print(e)
-
-
+        print(f"An error occurred: {e}")
 
 def upsert_user(conn, auth0_user_id, **kwargs):
     print('upsert_user() called')
     cur = conn.cursor()
     try:
+        # Convert UUIDs to strings for storage
+        converted_kwargs = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in kwargs.items()}
+        
         cur.execute("SELECT COUNT(*) FROM users WHERE auth0_user_id = ?", (auth0_user_id,))
         exists = cur.fetchone()[0] > 0
-        fields = list(kwargs.keys())  # Convert keys to a list
-        values = list(kwargs.values())  # Convert values to a list
+        fields = list(converted_kwargs.keys())
+        values = list(converted_kwargs.values())
 
         if exists:
             updates = ', '.join(f"{k} = ?" for k in fields)
             sql = f"UPDATE users SET {updates} WHERE auth0_user_id = ?"
-            params = values + [auth0_user_id]  # Combine the values and auth0_user_id into a single list
-            cur.execute(sql, params)  # Pass the SQL statement and the combined parameters as a tuple
+            params = values + [auth0_user_id]
+            cur.execute(sql, params)
         else:
             fields_str = ', '.join(fields)
-            placeholders = ', '.join(['?'] * len(kwargs))
+            placeholders = ', '.join('?' * len(converted_kwargs))
             sql = f"INSERT INTO users (auth0_user_id, {fields_str}) VALUES (?, {placeholders})"
-            params = [auth0_user_id] + values  # Combine auth0_user_id and values into a single list
-            cur.execute(sql, params)  # Pass the SQL statement and the combined parameters as a tuple
+            params = [auth0_user_id] + values
+            cur.execute(sql, params)
 
         conn.commit()
+        print('User upserted successfully.')
     except Exception as e:
-        print(f"Database error: {e}")
+        print(f"Database error during upsert: {e}")
     finally:
         cur.close()
 
-
-# Usage:
-#upsert_user(conn, auth0_user_id, email=user_email, name=user_name, roles=roles_str, memgpt_user_id=memgpt_user_id, memgpt_user_api_key=memgpt_user_api_key, default_agent_key=default_agent_key)
 
 
 def get_memgpt_user_id(conn, auth0_user_id):
@@ -112,24 +114,32 @@ def get_memgpt_user_id_and_api_key(conn, auth0_user_id):
     print('get_memgpt_user_id_and_api_key() result: ', result)
     return (result[0], result[1]) if result else (None, None)
 
-def get_memgpt_user_data(conn, auth0_user_id):
+def get_user_data(conn, auth0_user_id):
     """
-    Retrieve the MemGPT user ID, API key, and default agent key for a given Auth0 user ID.
+    Retrieve the MemGPT user ID, API key, default agent key, and VAPI assistant ID for a given Auth0 user ID.
 
     Parameters:
     - conn: The database connection object.
     - auth0_user_id: The Auth0 user ID.
 
     Returns:
-    - A tuple containing the MemGPT user ID, API key, and default agent key if found, (None, None, None) otherwise.
+    - A tuple containing the MemGPT user ID, API key, default agent key, and VAPI assistant ID if found, 
+      (None, None, None, None) otherwise.
     """
-    print('get_memgpt_user_data() called')
-    sql = """SELECT memgpt_user_id, memgpt_user_api_key, default_agent_key FROM users WHERE auth0_user_id = ?"""
+    print('get_user_data() called')
+    # Include vapi_assistant_id in the SELECT clause
+    sql = """
+    SELECT memgpt_user_id, memgpt_user_api_key, default_agent_key, vapi_assistant_id 
+    FROM users 
+    WHERE auth0_user_id = ?
+    """
     cur = conn.cursor()
     cur.execute(sql, (auth0_user_id,))
     result = cur.fetchone()
-    print('gget_memgpt_user_data result: ', result)
-    return (result[0], result[1], result[2]) if result else (None, None, None)
+    print('get_user_data result: ', result)
+    # Return a tuple including the vapi_assistant_id
+    return (result[0], result[1], result[2], result[3]) if result else (None, None, None, None)
+
 
 
 def print_all_records(conn):

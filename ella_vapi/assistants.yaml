@@ -1,0 +1,68 @@
+templates:
+  basic:
+    transcriber:
+      provider: "deepgram"
+      model: "nova-2-conversationalai"
+      language: "en-US"
+    model:
+      provider: "custom-llm"
+      url: "https://default-model-url.com/memgpt-sse"
+      model: "groq"
+    voice:
+      provider: "deepgram"
+      voiceId: "standard-voice"
+    name: "Standard Assistant"
+    firstMessage: "Hello, how can I assist you today?"
+
+  advanced:
+    transcriber:
+      provider: "deepgram"
+      model: "nova-2-conversationalai"
+      language: "en-US"
+    model:
+      provider: "custom-llm"
+      url: "https://advanced-model-url.com/memgpt-sse"
+      model: "groq-advanced"
+    voice:
+      provider: "deepgram"
+      voiceId: "premium-voice"
+    name: "Advanced Assistant"
+    firstMessage: "Welcome! How may I help you on this fine day?"
+
+
+  asteria:
+    transcriber:
+      provider: deepgram
+      model: nova-2-conversationalai
+      language: en-US
+    model:
+      provider: custom-llm
+      url: "https://chat.ella-ai-care.com/memgpt-sse"
+      urlRequestMetadataEnabled: true
+      model: gpt-4
+      temperature: 0
+      functions: []
+      maxTokens: 500
+    voice:
+      provider: deepgram
+      voiceId: asteria
+    recordingEnabled: true
+    endCallFunctionEnabled: true
+    dialKeypadFunctionEnabled: true
+    hipaaEnabled: false
+    silenceTimeoutSeconds: 30
+    responseDelaySeconds: 0.4
+    llmRequestDelaySeconds: 0.1
+    numWordsToInterruptAssistant: 2
+    maxDurationSeconds: 1800
+    backgroundSound: "off"
+    name: "Ella"
+    firstMessage: "Hello, can you hear me?"
+    voicemailDetectionEnabled: true
+    voicemailMessage: "Hi, it's me, Ella. Just trying to reach you. Call back when you can. Talk to you soon."
+    endCallMessage: "Talk to you later."
+    endCallPhrases:
+      - "Bye Bye"
+    serverUrl: "https://chat.ella-ai-care.com/api/vapi"
+    serverUrlSecret: "x-vapi-secret-changeme"
+

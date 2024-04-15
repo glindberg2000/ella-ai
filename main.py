@@ -29,14 +29,17 @@ from chainlit.user_session import user_session
 
 
 from ella_memgpt.extendedRESTclient import ExtendedRESTClient
+from memgpt.client.admin import Admin as AdminRESTClient
 from ella_memgpt.memgpt_admin import create_memgpt_user_and_api_key, manage_agents
+from ella_vapi.vapi_client import VAPIClient
+
 
 # Import the database management functions from db_manager module
 from ella_dbo.db_manager import (
     create_connection,
     create_table,
-    get_memgpt_user_id_and_api_key,
-    upsert_user,
+    get_user_data,
+    upsert_user
 )
 from openai_proxy import router as openai_proxy_router
 
@@ -67,11 +70,15 @@ DEFAULT_AGENT_CONFIG = {
     "human": "cs_phd",
     "persona": "anna_pa",
 }
-CHATBOT_NAME = "Ella"
+CHATBOT_NAME = "Ella AI"
 
 from chainlit.context import init_http_context
 
 
+import logging
+
+# Set up basic configuration for logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 @app.get("/voice-chat")
 async def new_test_page():
@@ -79,58 +86,89 @@ async def new_test_page():
         url="https://vapi.ai/?demo=true&shareKey=c87ea74e-bebf-4196-aebb-fbd77d5f28c0&assistantId=7d444afe-1c8b-4708-8f45-5b6592e60b47"
     )
 
+def handle_default_agent(memgpt_user_id, user_api):
+    logging.info(f"Checking for default agent for user {memgpt_user_id}")
+    try:
+        agent_info = user_api.list_agents()
+        if not agent_info.num_agents:
+            logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
+            agent_response = user_api.create_agent()  # This should return an object with an AgentState attribute
+            default_agent_key = agent_response.id  # Access attributes directly
+            logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id}")
+        else:
+            default_agent_key = agent_info.agents[0].id  # Assume agents is a list of objects, not dictionaries
+            logging.info(f"Multiple agents found for user {memgpt_user_id}. Selecting first agent found: {default_agent_key}")
+        return default_agent_key
+    except Exception as e:
+        logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
+        raise
+
 
 @cl.oauth_callback
-def oauth_callback(
+async def oauth_callback(
     provider_id: str,
     token: str,
     raw_user_data: Dict[str, Any],
     default_user: cl.User,
 ) -> Optional[cl.User]:
+    # Extract user info from raw_user_data
     auth0_user_id = raw_user_data.get("sub", "Unknown ID")
     user_email = raw_user_data.get("email", None)
     user_name = raw_user_data.get("name", None)
-    user_roles = raw_user_data.get(
-        "https://ella-ai/auth/roles", ["none"]
-    )  # Assign 'none' as a default role
+    user_roles = raw_user_data.get("https://ella-ai/auth/roles", ["none"])
+    roles_str = ", ".join(user_roles)
 
+    # Database operations
     conn = create_connection()
     create_table(conn)
-    roles_str = ", ".join(user_roles)
+    memgpt_user_id, memgpt_user_api_key, default_agent_key, vapi_assistant_id = get_user_data(conn, auth0_user_id)
+
+    # MemGPT and VAPI Assistant Setup
+    if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id:
+        admin_api = AdminRESTClient(base_url, master_api_key)
+
+        if not memgpt_user_id:
+            # Create MemGPT user
+            memgpt_user = admin_api.create_user()
+            memgpt_user_id = str(memgpt_user.user_id)
+            memgpt_user_api_key = memgpt_user.api_key
+            logging.info(f"New memgpt user created: {memgpt_user_id}")
+
+        if not memgpt_user_api_key:
+            # Create MemGPT API key
+            memgpt_user_api_key = admin_api.create_key(memgpt_user_id)
+            logging.info(f"New memgpt API key created: {memgpt_user_api_key}")
+
+        if not default_agent_key:
+            # Check for default agent
+            user_api = ExtendedRESTClient(base_url, memgpt_user_api_key)
+            default_agent_key = handle_default_agent(memgpt_user_id, user_api)
+
+        if not vapi_assistant_id:
+            # Create VAPI Assistant using the VAPIClient and a preset template
+            vapi_client = VAPIClient()
+            preset_name = 'asteria'  # Example preset name
+            customizations = {"serverUrlSecret": str(memgpt_user_api_key)+':'+str(default_agent_key)}
+            vapi_assistant_response = await vapi_client.create_assistant(preset_name, customizations)
+            vapi_assistant_id = vapi_assistant_response.get('id')  # Extract the 'id' from the response
+            await vapi_client.close()
+            logging.info(f"VAPI Assistant created with ID: {vapi_assistant_id}")
+
+
+   # Update the database with new or existing data
     upsert_user(
         conn,
         auth0_user_id=auth0_user_id,
         roles=roles_str,
         email=user_email,
         name=user_name,
+        memgpt_user_id=memgpt_user_id,
+        memgpt_user_api_key=memgpt_user_api_key,
+        default_agent_key=default_agent_key,
+        vapi_assistant_id=vapi_assistant_id
     )
-
-    # Check if the user has a MemGPT user ID and API key
-    memgpt_user_id, memgpt_user_api_key = get_memgpt_user_id_and_api_key(conn, auth0_user_id)
-
-   
-    # If the user does not have a MemGPT user ID or API key, create them, 
-    # we could update this to also just get the api key of the user
-    # Assuming you are checking if either ID or key is None and then calling the creation function
-    if not memgpt_user_id or not memgpt_user_api_key:
-        user_values = create_memgpt_user_and_api_key()  # This will return the dictionary with new keys
-        memgpt_user_id = user_values["memgpt_user_id"]  # Extract the user_id from the dictionary
-        memgpt_user_api_key = user_values["memgpt_user_api_key"]  # Extract the API key from the dictionary
-
-        # Update the user's MemGPT user ID and API key in the database
-        upsert_user(
-            conn,
-            auth0_user_id=auth0_user_id,
-            roles=roles_str,
-            email=user_email,
-            name=user_name,
-            memgpt_user_id=memgpt_user_id,
-            memgpt_user_api_key=memgpt_user_api_key,
-        )
-   
     conn.close()
 
-    # Create the custom user object
     custom_user = cl.User(
         identifier=user_name,
         metadata={
@@ -138,20 +176,20 @@ def oauth_callback(
             "email": user_email,
             "name": user_name,
             "roles": user_roles,
-            "memgpt_user_id": memgpt_user_id,
-            "memgpt_user_api_key": memgpt_user_api_key,
+            "memgpt_user_id": str(memgpt_user_id),  # Ensure this is a string
+            "memgpt_user_api_key": str(memgpt_user_api_key),  # Ensure this is a string
+            "default_agent_key": str(default_agent_key),  # Ensure this is a string
+            "vapi_assistant_id": str(vapi_assistant_id)  # Ensure this is a string
         }
     )
 
     return custom_user
 
-
-
 @cl.on_chat_start
 async def on_chat_start():
     # Attempt to access user details from the cl.User object
     try:
-        app_user = cl.user_session.get("user")  # Simulated retrieval of user session
+        app_user = cl.user_session.get("user")  #retrieval of user session with chainlit context
         roles = app_user.metadata.get("roles", [])
         # Directly check for 'user' role in user roles
         if "user" not in roles:
@@ -175,20 +213,20 @@ async def on_chat_start():
 
 # Assuming the guardian_agent_analysis function returns a string (the note) or None
 def guardian_agent_analysis(message_content):
-    print("Guardian Agent Analysis called.")  # Debugging statement
+    logging.info(f"Guardian Agent Analysis called for message: {message_content}")
     if "medication" in message_content.lower():
         note = "Note from staff: Remind user to take their meds since it's been over 24 hours."
-        print(f"Guardian note generated: {note}")  # Debugging statement
+        logging.info(f"Guardian note generated: {note}")
         return note
     return None
 
 
 # Assuming the guardian_agent_analysis function returns a string (the note) or None
 def guardian_agent_analysis2(message_content):
-    print("Guardian Agent Analysis called.")  # Debugging statement
+    logging.info("guardian_agent_analysis2 called.")  # Debugging statement
     if "tired" in message_content.lower():
         note = "Note from staff: Remind user to get some exercise and fresh air."
-        print(f"Guardian note generated: {note}")  # Debugging statement
+        logging.info(f"Guardian note generated: {note}")
         return note
     return None
 
@@ -196,28 +234,44 @@ def guardian_agent_analysis2(message_content):
 @cl.on_message
 async def on_message(message: cl.Message):
     user_api_key = DEFAULT_API_KEY
-    agent_id = DEFAULT_AGENT_ID
+    #agent_id = DEFAULT_AGENT_ID
+
+    # Attempt to access user details from the cl.User object
+    try:
+        app_user = cl.user_session.get("user")  #retrieval of user session with chainlit context
+        agent_id = app_user.metadata.get("default_agent_key", DEFAULT_AGENT_ID)
+        user_api_key = app_user.metadata.get("memgpt_user_api_key", DEFAULT_API_KEY)
+        logging.info(f"Retrieved user data from session: {app_user.metadata}")
+    except Exception as e:
+        logging.error(f"Failed to retrieve user data from session: {e}")
+        await cl.Message(
+            content="An error occurred while processing your request. Please try again.",
+            author=CHATBOT_NAME,
+        ).send()
+        return
+
     user_api = ExtendedRESTClient(base_url, user_api_key)
 
-    print(f"Received message: {message.content}")  # Debugging statement
+    logging.info(f"Received message from user {message.author} with content: {message.content}")
     # Call the guardian agent function to analyze the message and potentially add notes
     guardian_note = guardian_agent_analysis2(message.content)
 
     # Prepare the message for MemGPT, appending the guardian's note if it exists
     message_for_memgpt = message.content
     if guardian_note:
-        print(f"Appending staff note to message: {guardian_note}")  # Debugging
+        logging.info(f"Appending staff note to message: {guardian_note}")
         # Use an async step to visualize the staff note addition
         async with cl.Step(name="Adding Staff Note", type="note") as note_step:
             note_step.input = message.content
             note_step.output = guardian_note
-            print("Visualizing staff note addition.")  # Debugging statement
+            logging.info("Finished appending staff note addition.")  # Debugging statement
 
         # Append the note to the user's message, ensuring a clear separation
         message_for_memgpt += f"\n\n{guardian_note}"
     else:
-        print("No staff note added.")  # Debugging statement
+        logging.info("No staff note added.")  # Debugging statement
 
+    # Send the message to the MemGPT agent
     async with cl.Step(name=CHATBOT_NAME, type="llm", root=True) as root_step:
         root_step.input = message.content
         assistant_message = ""
