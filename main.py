@@ -43,16 +43,15 @@ from ella_dbo.db_manager import (
 )
 from openai_proxy import router as openai_proxy_router
 
-app.include_router(openai_proxy_router, prefix="/api")
 
-# Add other routes or routers as needed
-
+debug = True  # Turn on debug mode to see detailed logs
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
+app.include_router(openai_proxy_router, prefix="/api")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -141,7 +140,7 @@ async def oauth_callback(
 
         if not default_agent_key:
             # Check for default agent
-            user_api = ExtendedRESTClient(base_url, memgpt_user_api_key)
+            user_api = ExtendedRESTClient(base_url, memgpt_user_api_key, debug)
             default_agent_key = handle_default_agent(memgpt_user_id, user_api)
 
         if not vapi_assistant_id:
@@ -250,7 +249,7 @@ async def on_message(message: cl.Message):
         ).send()
         return
 
-    user_api = ExtendedRESTClient(base_url, user_api_key)
+    user_api = ExtendedRESTClient(base_url, user_api_key, debug)
 
     logging.info(f"Received message from user {message.author} with content: {message.content}")
     # Call the guardian agent function to analyze the message and potentially add notes

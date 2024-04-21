@@ -3,7 +3,7 @@
 import json
 import os
 import time
-
+import uuid
 import httpx
 from chainlit.server import app
 from dotenv import load_dotenv
@@ -12,20 +12,19 @@ from fastapi.responses import JSONResponse
 from openai import OpenAI
 from starlette.responses import StreamingResponse
 from typing import Optional
+import asyncio
 import logging
+import redis
+from ella_memgpt.extendedRESTclient import ExtendedRESTClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-from ella_memgpt.extendedRESTclient import ExtendedRESTClient
-
-# Add other routes or routers as needed
+debug = True  # Turn on debug mode to see detailed logs
 
 # Load environment variables from .env file
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY", "defaultopenaikey")
-# Load environment variables from .env file
-
 base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8283")
 master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
 # Define default values
@@ -40,11 +39,10 @@ DEFAULT_AGENT_CONFIG = {
 }
 CHATBOT_NAME = "Ella"
 # Initialize the OpenAI client
+
 client = OpenAI()
-
-
 router = APIRouter()
-
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
 @app.get("/test")
 async def test_endpoint():
@@ -142,31 +140,6 @@ async def dummy_memgpt_sse_handler(request: Request):
         memgpt_response = {"assistant_message": "Simulated response from MemGPT."}
         return JSONResponse(content=memgpt_response)
 
-# @app.post("/memgpt-sse/chat/completions")
-# async def custom_memgpt_sse_handler(request: Request):
-#     incoming_request_data = await request.json()
-#     print('incoming data:',incoming_request_data)
-#     latest_message = sanitize_request_for_memgpt(incoming_request_data)
-#     print('latest message:',latest_message)
-#     #latest_message = 'how is the weather today?'
-#     user_api_key = DEFAULT_API_KEY
-#     agent_id = DEFAULT_AGENT_ID
-#     user_api = ExtendedRESTClient(base_url, user_api_key)
-
-#     streaming = incoming_request_data.get("stream", True)
-#     if streaming:
-#         try:
-#             print('latest message from vapi received:',latest_message)
-#             memgpt_response_stream = user_api.send_message_to_agent_streamed(agent_id, latest_message)
-#             return StreamingResponse(
-#                 generate_memgpt_streaming_response(memgpt_response_stream),
-#                 media_type="text/event-stream",
-#             )
-#         except Exception as e:
-#             raise HTTPException(status_code=500, detail=str(e))
-#     else:
-#         # Handle non-streaming scenario if applicable
-#         pass
 
 @app.post("/memgpt-sse/chat/completions")
 async def custom_memgpt_sse_handler(request: Request):
@@ -190,9 +163,6 @@ async def custom_memgpt_sse_handler(request: Request):
         logging.error("Invalid serverUrlSecret format. Expected format 'user_api_key:default_agent_id'")
         raise HTTPException(status_code=400, detail="Invalid serverUrlSecret format")
 
-    # Set up the API client using extracted credentials
-    user_api = ExtendedRESTClient(base_url, user_api_key)
-
     # Extract and log the latest message
     try:
         latest_message = incoming_request_data['messages'][-1]['content']
@@ -201,6 +171,9 @@ async def custom_memgpt_sse_handler(request: Request):
         logging.error("Failed to extract the latest message due to improper data structure.")
         raise HTTPException(status_code=400, detail=f"Error in message data: {str(e)}")
 
+    # Set up the API client using extracted credentials
+    user_api = ExtendedRESTClient(base_url, user_api_key, debug)
+
     # Check for streaming and process accordingly
     streaming = incoming_request_data.get("stream", True)
     if streaming:
@@ -208,7 +181,8 @@ async def custom_memgpt_sse_handler(request: Request):
             memgpt_response_stream = user_api.send_message_to_agent_streamed(default_agent_id, latest_message)
             logging.info(f'Sending request to MEMGPT with agent ID {default_agent_id}')
             return StreamingResponse(
-                generate_memgpt_streaming_response(memgpt_response_stream),
+                #generate_memgpt_streaming_response(memgpt_response_stream),
+                response_stream(memgpt_response_stream),
                 media_type="text/event-stream",
             )
         except Exception as e:
@@ -218,9 +192,73 @@ async def custom_memgpt_sse_handler(request: Request):
         # Handle non-streaming scenario if applicable
         logging.info(f'Streaming not set to True, handling non-streaming scenario: exiting')
 
-import time
-import uuid
-import json
+
+
+def create_response_chunk(content, end_of_conversation=False):
+    response_id = str(uuid.uuid4())
+    response_timestamp = int(time.time())
+    response = {
+        "id": response_id,
+        "choices": [
+            {
+                "delta": {
+                    "content": content,
+                    "function_call": None,
+                    "role": None,
+                    "tool_calls": None
+                },
+                "finish_reason": "stop" if end_of_conversation else None,
+                "index": 0,
+                "logprobs": None
+            }
+        ],
+        "created": response_timestamp,
+        "model": "memgpt-custom-model",
+        "object": "chat.completion.chunk",
+        "system_fingerprint": None
+    }
+    json_data = json.dumps(response)
+    return f"data: {json_data}\n\n"
+
+
+async def response_stream(memgpt_response_stream):
+    max_retries = 10
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            #memgpt_response_stream = user_api.send_message_to_agent_streamed(agent_id, message)
+            async for chunk in memgpt_response_stream:
+                data_content = json.loads(chunk.lstrip("data: "))
+                
+                # Checking for the presence of an 'internal_error' key
+                if 'internal_error' in data_content:
+                    error_message = data_content['internal_error']
+                    if "423: Agent" in error_message:
+                        yield create_response_chunk('Agent is currently busy, please wait...')
+                        await asyncio.sleep(2)  # Wait before retrying
+                        break  # Break the current stream and retry
+                    else:
+                        yield create_response_chunk('An unnamed error occurred: ' + error_message)
+                elif 'assistant_message' in data_content:
+                    yield create_response_chunk(data_content['assistant_message'], data_content.get("end_of_conversation", False))
+                elif 'function_call' in data_content:
+                    yield create_response_chunk('Function Call')
+                elif 'function_return':
+                    yield create_response_chunk('Function Return')
+                elif 'internal_monologue' in data_content:
+                    yield create_response_chunk('Internal Monologue')
+                else:
+                    yield create_response_chunk('Processing...') #probably can skip this or just log it
+
+        except Exception as e:
+            yield create_response_chunk(f'Unexpected error, trying again: {str(e)}')
+            await asyncio.sleep(2)
+
+        retry_count += 1
+
+    if retry_count >= max_retries:
+        yield create_response_chunk('Failed after multiple attempts')
+
 
 async def generate_memgpt_streaming_response(data_stream):
     """
@@ -261,43 +299,9 @@ async def generate_memgpt_streaming_response(data_stream):
                 json_data = json.dumps(response)
                 yield f"data: {json_data}\n\n"
 
-# async def generate_memgpt_streaming_response(data_stream):
-    """
-    Asynchronous generator function to process and yield MemGPT response data.
-    It checks the type of each message part (e.g., assistant_message, function_call)
-    and handles it accordingly in an asynchronous context.
-    """
-    async for data_line in data_stream:
-        if data_line.startswith("data: "):
-            data_content = data_line[6:]  # Extract JSON content
-            message_part = json.loads(data_content)  # Convert string to dictionary
-            
-            # Handle different types of messages
-            if "assistant_message" in message_part:
-                # Construct response similar to the simulated OpenAI response for compatibility
-                response = {
-                    "id": "memgpt-chatcmpl-XXXXX",
-                    "choices": [
-                        {
-                            "delta": {
-                                "content": message_part["assistant_message"],
-                                "function_call": None,
-                                "role": None,
-                                "tool_calls": None
-                            },
-                            "finish_reason": "stop" if message_part.get("end_of_conversation", False) else None,
-                            "index": 0,
-                            "logprobs": None
-                        }
-                    ],
-                    "created": 1712776130,  # This would be dynamic in a real scenario
-                    "model": "memgpt-custom-model",
-                    "object": "chat.completion.chunk",
-                    "system_fingerprint": None
-                }
-                json_data = json.dumps(response)
-                yield f"data: {json_data}\n\n"
-            # Add elif blocks here for other message_part types as needed, e.g., function_call
+
+
+
 
 # Used for context, end of calls, etc. Protected by memgpt user and agent keys
 @app.post("/api/vapi")
@@ -322,47 +326,155 @@ async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Hea
     logging.debug(f"Incoming data: {incoming_request_data}")
     #TBD: build out call end data handler, etc. here
 
+async def fetch_new_messages(user_api: ExtendedRESTClient, agent_id: uuid.UUID, last_message_id: uuid.UUID, interval=5):
+    while True:
+        response = user_api.get_messages(agent_id, after=last_message_id, limit=10)  # Fetch new messages
+        if 'messages' in response and response['messages']:
+            last_message_id = response['messages'][-1]['id']  # Update last_message_id to the latest
+            user_facing_messages = extract_assistant_messages(response['messages'])
+
+            for message in user_facing_messages:
+                formatted_message = create_response_chunk(message)
+                yield formatted_message
+
+            if not user_facing_messages:
+                # Optionally yield a message if no relevant assistant messages were found
+                yield create_response_chunk("No new relevant messages at the moment.", end_of_conversation=True)
+
+        else:
+            # Send a completion event if no new messages are available
+            yield create_response_chunk("No new messages at the moment.", end_of_conversation=True)
+            break  # Break or keep alive depending on desired behavior
+
+        await asyncio.sleep(interval)  # Polling interval
+
+def extract_assistant_messages(messages):
+    extracted_messages = []
+    for message in messages:
+        if message.get('role') == 'assistant' and message.get('tool_calls'):
+            for tool_call in message['tool_calls']:
+                if tool_call.get('type') == 'function' and tool_call['function']['name'] == 'send_message':
+                    try:
+                        function_args = json.loads(tool_call['function']['arguments'])
+                        user_message = function_args.get('message')
+                        if user_message:
+                            extracted_messages.append(user_message)
+                    except json.JSONDecodeError:
+                        print("Error decoding the function arguments JSON.")
+    return extracted_messages
+
+async def extract_request_data(request: Request):
+    """Extracts necessary data from the incoming request.
+
+    Args:
+        request (Request): The incoming FastAPI request object.
+
+    Returns:
+        tuple: A tuple containing user_api_key, default_agent_id, and latest_message.
+
+    Raises:
+        HTTPException: If any required data is missing or in an invalid format.
+    """
+    # Extract the full incoming request data
+    incoming_request_data = await request.json()
+    logging.info(f'Full incoming request data: {incoming_request_data}')
+
+    # Extract serverUrlSecret
+    try:
+        server_url_secret = incoming_request_data['call']['serverUrlSecret']
+        logging.info(f'Extracted serverUrlSecret: {server_url_secret}')
+    except KeyError as e:
+        logging.error(f'serverUrlSecret not found in the expected call configuration: {str(e)}')
+        raise HTTPException(status_code=400, detail="serverUrlSecret is missing from the call configuration")
+
+    # Split serverUrlSecret into user API key and default agent ID
+    try:
+        user_api_key, default_agent_id = server_url_secret.split(':')
+        logging.info(f'Extracted user API key: {user_api_key} and default agent ID: {default_agent_id}')
+    except ValueError:
+        logging.error("Invalid serverUrlSecret format. Expected format 'user_api_key:default_agent_id'")
+        raise HTTPException(status_code=400, detail="Invalid serverUrlSecret format")
+
+    # Extract the latest message
+    try:
+        latest_message = incoming_request_data['messages'][-1]['content']
+        logging.info(f'Latest message from Vapi: {latest_message}')
+    except (KeyError, IndexError, TypeError) as e:
+        logging.error("Failed to extract the latest message due to improper data structure.")
+        raise HTTPException(status_code=400, detail=f"Error in message data: {str(e)}")
+
+    return user_api_key, default_agent_id, latest_message
 
 
-# # Protected by memgpt user and agent keys
-# @app.post("/memgpt-sse/chat/completions")
-# async def custom_memgpt_sse_handler(request: Request, x_vapi_secret: Optional[str] = Header(None)):
-#     if not x_vapi_secret:
-#         logging.error("x-vapi-secret header is missing")
-#         # Log all headers for debugging
-#         headers = dict(request.headers)
-#         logging.debug(f"All received headers: {headers}")
-#         raise HTTPException(status_code=400, detail="x-vapi-secret header missing")
 
-#     # Parse the x-vapi-secret to obtain the memgpt_user_api_key and default_agent_key
-#     try:
-#         memgpt_user_api_key, default_agent_key = x_vapi_secret.split(':')
-#     except ValueError:
-#         logging.error("Invalid x-vapi-secret format")
-#         raise HTTPException(status_code=400, detail="Invalid x-vapi-secret format")
 
-#     logging.info(f"User API Key: {memgpt_user_api_key}, Agent ID: {default_agent_key}")
+@app.post("/memgpt-sse-old2/chat/completions")
+async def custom_memgpt_sse_handler(request: Request):
+    # Extract the full incoming request data
+    # incoming_request_data = await request.json()
+    # logging.info(f'Full incoming request data: {incoming_request_data}')
+    try:
+        user_api_key, agent_id, latest_message = await extract_request_data(request)
+        logging.info("Extracted data - User API Key: %s, Default Agent ID: %s, Latest Message: %s",
+                     user_api_key, agent_id, latest_message)
+    except HTTPException as he:
+        logging.error("Failed to extract request data: %s", str(he))
+        raise he
 
-#     incoming_request_data = await request.json()
-#     logging.debug(f"Incoming data: {incoming_request_data}")
-#     latest_message = sanitize_request_for_memgpt(incoming_request_data)
-#     logging.info(f"Latest message: {latest_message}")
+    # Set up the API client using extracted credentials
+    user_api = ExtendedRESTClient(base_url, user_api_key, debug)
 
-#     user_api = ExtendedRESTClient(base_url, memgpt_user_api_key)
 
-#     streaming = incoming_request_data.get("stream", True)
-#     if streaming:
-#         try:
-#             logging.info(f"Latest message from vapi received: {latest_message}")
-#             memgpt_response_stream = user_api.send_message_to_agent_streamed(default_agent_key, latest_message)
-#             return StreamingResponse(
-#                 generate_memgpt_streaming_response(memgpt_response_stream),
-#                 media_type="text/event-stream",
-#             )
-#         except Exception as e:
-#             logging.error(f"Error processing the streaming request: {str(e)}")
-#             raise HTTPException(status_code=500, detail=str(e))
-#     else:
-#         # Handle non-streaming scenario if applicable
-#         pass
+    try:
+        # Fetch the latest message to determine the last_message_id to start streaming from
+        try:
+            latest_messages_response =  await user_api.aget_messages(agent_id, limit=1)
+            if latest_messages_response is None or 'messages' not in latest_messages_response or not latest_messages_response['messages']:
+                logging.warning("No messages fetched or empty messages list")
+                last_message_id = None
+            else:
+                try:
+                    last_message_id = uuid.UUID(latest_messages_response['messages'][-1]['id'])
+                    logging.info("Latest message ID: %s", last_message_id)
+                except (ValueError, TypeError, KeyError) as e:
+                    logging.error(f"Error converting last message ID to UUID: {str(e)}")
+                    last_message_id = None
+                    logging.warning("No messages found for agent_id: %s", agent_id)
+        except Exception as e:
+            logging.error("Failed to fetch latest messages: %s", str(e))
+            raise HTTPException(status_code=500, detail="Failed to fetch latest messages")
 
+        # Send a new message based on the latest context
+        send_message_task = asyncio.create_task(
+            user_api.asend_message(agent_id, latest_message, "user", False)
+        )
+
+        # Start streaming response immediately after fetching the latest message ID
+        streaming_response = StreamingResponse(
+            fetch_new_messages(user_api, agent_id, last_message_id, interval=2),
+            media_type="text/event-stream"
+        )
+
+        # Optionally, await the send_message_task if you need to ensure it completes successfully
+        try:
+            response = await send_message_task
+            if not response or 'id' not in response:
+                logging.error("Failed to send message or invalid response: %s", response)
+                await user_api.close()
+                raise HTTPException(status_code=500, detail="Failed to send message or fetch message ID")
+        except Exception as e:
+            logging.error("Error during message sending task: %s", str(e))
+            raise HTTPException(status_code=500, detail="Error during message sending task")
+
+        logging.info("Streaming response setup completed.")
+        return streaming_response
+    except Exception as e:
+        logging.error("Error during custom_memgpt_sse_handler: %s", str(e))
+        raise HTTPException(status_code=500, detail="Error during custom_memgpt_sse_handler")
+    finally:
+        await user_api.close()
+
+
+
+### REDIS based queue version ###
+### REDIS QUEU app ###

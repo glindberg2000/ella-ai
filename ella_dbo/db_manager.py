@@ -21,6 +21,31 @@ def create_connection():
         print(e)
     return conn
 
+def get_user_data_by_memgpt_id(conn, memgpt_user_id):
+    """
+    Retrieve the MemGPT user API key, default agent key, and VAPI assistant ID for a given MemGPT user ID.
+
+    Parameters:
+    - conn: The database connection object.
+    - memgpt_user_id: The MemGPT user ID.
+
+    Returns:
+    - A tuple containing the MemGPT user API key, default agent key, and VAPI assistant ID if found, 
+      (None, None, None) otherwise.
+    """
+    print('get_user_data_by_memgpt_id() called')
+    sql = """
+    SELECT memgpt_user_api_key, default_agent_key, vapi_assistant_id 
+    FROM users 
+    WHERE memgpt_user_id = ?
+    """
+    cur = conn.cursor()
+    cur.execute(sql, (memgpt_user_id,))
+    result = cur.fetchone()
+    print('get_user_data_by_memgpt_id result: ', result)
+    # Return a tuple including the vapi_assistant_id
+    return (result[0], result[1], result[2]) if result else (None, None, None)
+
 def create_table(conn):
     """Create tables to store user info, given a connection."""
     print('Creating table users...')

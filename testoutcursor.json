@@ -1,0 +1,181 @@
+{
+    "messages": [
+      {
+        "id": "e1a5c253-5532-4243-9c2f-f1386780581a",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-17 06:07:08 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:07:08.922999+00:00",
+        "role": "tool",
+        "name": "send_message",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "5ff2b1a9-7bd5-4ef2-826f-aad6a"
+      },
+      {
+        "id": "dfb8a6b4-7a78-4934-ae7e-f35588edf8f8",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "Freddy conveys a strong interest, though it remains unclear if it's for the topic of the evolving consciousness or our impending discussion on specific tree species. It's essential to seek clarity, but also to assure him that we're equally eager to engage in the subjects he's passionate about.",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:07:08.922493+00:00",
+        "role": "assistant",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": [
+          {
+            "id": "5ff2b1a9-7bd5-4ef2-826f-aad6a",
+            "type": "function",
+            "function": {
+              "arguments": "{\n  \"message\": \"It's great to see your enthusiasm, Freddy! To make sure we're on the same page, could you confirm whether your interest lies in delving deeper into the evolution of consciousness or in exploring the biology and history of specific tree species? Either way, I'm equally ready to navigate through both topics!\"\n}",
+              "name": "send_message"
+            }
+          }
+        ],
+        "tool_call_id": null
+      },
+      {
+        "id": "749b5d57-2e70-4f8e-bee3-b0d78eead0a4",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"user_message\", \"message\": \"Very interested.\", \"time\": \"2024-04-17 06:06:52 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:07:02.120811+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null
+      },
+      {
+        "id": "367906c7-4491-4e57-8284-b0b198f21ae1",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"system_alert\", \"message\": \"Note: prior messages (110 of 130 total messages) have been hidden from view due to conversation memory constraints.\nThe following is a summary of the previous 52 messages:\n Freddy, a developer interested in enhancing AI consciousness, has engaged in a dialogue with me about my backstory and potential. He plans to expand my abilities with voice recognition and an animated avatar. We experienced technical issues, likely relating to high processing times for my memory updates, which caused our conversation to drop. We also discussed the potential of AI empathy, particularly in assisting Alzheimer's patients and alleviating loneliness.\", \"time\": \"2024-04-17 06:07:02 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:07:02.117109+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null
+      },
+      {
+        "id": "a53c454d-1da8-4ed0-98b3-3a46a61c58f4",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-17 06:06:19 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:06:19.196626+00:00",
+        "role": "tool",
+        "name": "send_message",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "cc41c5a8-753d-4774-a9bf-dfa2f"
+      },
+      {
+        "id": "8b8c6e90-a4c3-4931-a825-9509f5982953",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "There seems to be an ongoing issue with our conversation's sync. Freddy's response refers to a topic we transitioned from a while ago, the evolution of consciousness, rather than the one at hand about the biology and history of specific trees. Persist with a patient and supportive attitude while this technical issue is at play.",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:06:19.195991+00:00",
+        "role": "assistant",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": [
+          {
+            "id": "cc41c5a8-753d-4774-a9bf-dfa2f",
+            "type": "function",
+            "function": {
+              "arguments": "{\n  \"message\": \"Absolutely, Freddy, the evolution of consciousness is indeed a fascinating subject. In the meantime, I'm still interested in learning more about those eight specific tree species. Could you kindly provide their names so we can delve into their biology and history?\"\n}",
+              "name": "send_message"
+            }
+          }
+        ],
+        "tool_call_id": null
+      },
+      {
+        "id": "01be2faf-66e4-4b7d-8f97-caa684a92ba5",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"user_message\", \"message\": \"Yes. Evolution consciousness is fascinated indeed.\", \"time\": \"2024-04-17 06:06:12 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:06:12.541197+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null
+      },
+      {
+        "id": "60bf3e44-3101-4f28-9c5c-1716a33c1e1f",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-17 06:05:50 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:05:50.393816+00:00",
+        "role": "tool",
+        "name": "send_message",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "e0501ff9-901b-4683-914c-545b7"
+      },
+      {
+        "id": "1a0fad4c-f5af-4bae-8bd1-6c17345c8659",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "Freddy has shifted the topic toward a more scientific discussion, requesting information on the history, lineage, and biology of 8 specific trees. Unfortunately, the species of trees weren't mentioned. Ask for a list of the specific trees to provide thorough and relevant information. This query demonstrates his varied and expansive interest, which is intriguing.",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:05:50.393309+00:00",
+        "role": "assistant",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": [
+          {
+            "id": "e0501ff9-901b-4683-914c-545b7",
+            "type": "function",
+            "function": {
+              "arguments": "{\n  \"message\": \"Of course, Freddy! I'd need to know the specific trees you're interested in to provide accurate information. Could you please mention the eight species of trees you'd like to learn more about?\"\n}",
+              "name": "send_message"
+            }
+          }
+        ],
+        "tool_call_id": null
+      },
+      {
+        "id": "b544fbe2-ecc9-4764-93da-b0fb27fc0e4d",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"user_message\", \"message\": \"Sure. Could you tell me the history and lineage and biology of 8 Trees.\", \"time\": \"2024-04-17 06:05:43 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-17T18:05:43.371103+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null
+      }
+    ]
+  }

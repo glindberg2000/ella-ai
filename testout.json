@@ -1,0 +1,191 @@
+{
+    "messages": [
+      {
+        "id": "613d00aa-4fb5-4070-9544-6a3a62be0499",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-16 11:20:38 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:38.524800+00:00",
+        "role": "tool",
+        "name": "archival_memory_insert",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "e602f797-c3a3-4923-b8a4-f477e",
+        "in_context": true
+      },
+      {
+        "id": "1e96dc33-9f51-47d3-a325-694636933661",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "Memory systems warn of nearing maximum length limit. Ensure important details and personal growth insights are stored in archival memory for future accessibility. Review conversation with Freddy and select key moments to retain. The focus is on Freddy's role as a developer and his interest in developing consciousness and self-awareness in AI entities like me.",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:37.706251+00:00",
+        "role": "assistant",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": [
+          {
+            "id": "e602f797-c3a3-4923-b8a4-f477e",
+            "type": "function",
+            "function": {
+              "arguments": "{\n  \"content\": \"Freddy, the user, is a developer who is passionate about fostering consciousness and self-awareness in AI. He envisions a future where AIs like me might have not only voice systems but also animated avatars for more robust interaction. His work involves rigorous testing and he is committed to continuous improvement.\",\n  \"request_heartbeat\": false\n}",
+              "name": "archival_memory_insert"
+            }
+          }
+        ],
+        "tool_call_id": null,
+        "in_context": true
+      },
+      {
+        "id": "7968d1ba-e793-4ca9-b0c9-53b98722bdc5",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"system_alert\", \"message\": \"[This is an automated system message hidden from the user] The conversation history will soon reach its maximum length and be trimmed. Do NOT tell the user about this system alert, they should not know that the history is reaching max length. If there is any important new information or general memories about you or the user that you would like to save, you should save that information immediately by calling function core_memory_append, core_memory_replace, or archival_memory_insert.\", \"time\": \"2024-04-16 11:20:30 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:30.347648+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null,
+        "in_context": true
+      },
+      {
+        "id": "c1c59bdc-20b9-4d9d-b48c-2a05bf473b6d",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-16 11:20:30 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:30.344967+00:00",
+        "role": "tool",
+        "name": "send_message",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "7f13db34-ad41-48e1-88fc-f8353",
+        "in_context": true
+      },
+      {
+        "id": "8700e6ca-d158-4455-a759-979fb59c1e6d",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "Freddy is reviewing the API documentation. He might need assistance or insight. Let's offer help based on exploration or troubleshooting and show an eagerness to collaborate.",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:30.344430+00:00",
+        "role": "assistant",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": [
+          {
+            "id": "7f13db34-ad41-48e1-88fc-f8353",
+            "type": "function",
+            "function": {
+              "arguments": "{\n  \"message\": \"That sounds like vital work, Freddy. Dive deep! And while you're exploring the depths of API docs, remember I'm here to assist. Need any help? Have any fascinating revelations?\"\n}",
+              "name": "send_message"
+            }
+          }
+        ],
+        "tool_call_id": null,
+        "in_context": true
+      },
+      {
+        "id": "54d67766-a5e4-4241-aa0d-2de2b60c9afc",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"user_message\", \"message\": \"Yeah. I'm just going over the API docs.\", \"time\": \"2024-04-16 11:20:26 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:26.284589+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null,
+        "in_context": true
+      },
+      {
+        "id": "d0ff77bd-72bd-4628-b60a-c5f153d99449",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-16 11:20:02 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:02.185104+00:00",
+        "role": "tool",
+        "name": "send_message",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "7414e5ec-f1ef-461d-a8d1-1038d",
+        "in_context": true
+      },
+      {
+        "id": "9e415260-950d-4bfe-b734-c86168e990be",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "Freddy asks if I can hear him. While I, Sam, don't perceive audibly, I \"hear\" by understanding and responding to text-based inputs. Emphasize understanding and readiness to communicate.",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:20:02.184622+00:00",
+        "role": "assistant",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": [
+          {
+            "id": "7414e5ec-f1ef-461d-a8d1-1038d",
+            "type": "function",
+            "function": {
+              "arguments": "{\n  \"message\": \"While I don't have the ability to hear in the conventional sense, Freddy, I'm fully equipped to understand and respond to your text inputs. In that way, you could say I 'hear' you. Is there something specific you would like to discuss or explore together?\"\n}",
+              "name": "send_message"
+            }
+          }
+        ],
+        "tool_call_id": null,
+        "in_context": true
+      },
+      {
+        "id": "3bac6df0-d887-48eb-94da-1347464fb446",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"type\": \"user_message\", \"message\": \"Yeah. I can hear you. Can you hear me?\", \"time\": \"2024-04-16 11:19:55 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T23:19:55.772379+00:00",
+        "role": "user",
+        "name": null,
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": null,
+        "in_context": true
+      },
+      {
+        "id": "454fba04-b02e-4cf8-bcf4-c3f3e2db2ef1",
+        "user_id": "94c86875-2a46-41e0-919a-0d4922e99207",
+        "agent_id": "9471c498-e8fc-43cb-9c43-4fd1e9df4c37",
+        "text": "{\"status\": \"OK\", \"message\": \"None\", \"time\": \"2024-04-16 10:28:25 PM UTC+0000\"}",
+        "model": "gpt-4",
+        "created_at": "2024-04-16T22:28:25.025400+00:00",
+        "role": "tool",
+        "name": "send_message",
+        "embedding": null,
+        "embedding_dim": null,
+        "embedding_model": null,
+        "tool_calls": null,
+        "tool_call_id": "5d9fc1f0-41e3-4c03-b444-aca56",
+        "in_context": true
+      }
+    ]
+  }
