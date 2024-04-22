@@ -35,12 +35,13 @@ async def shutdown_event():
 
 async def queue_request(latest_message, server_url_secret: Optional[str] = None):
     """Queue a new request in Redis with a unique `request_id`."""
-    request_id = str(uuid.uuid4())
+    request_id = str(uuid.uuid4()) #Poetentially extract from VAPI instead
     await app.redis.lpush("requests", json.dumps({
         "request_id": request_id,
         "incoming_message": latest_message,
         "timestamp_created": time.time(),
-        "server_url_secret": server_url_secret
+        "server_url_secret": server_url_secret,
+        "raw_message_placeholder": None #Placeholder if you want to save the entire request
     }))
     return request_id
 
@@ -63,6 +64,7 @@ async def worker_process():
             request = json.loads(request_data)
         except json.JSONDecodeError:
             logging.error("Failed to decode request data.")
+            logging.error(f"Request data: {request_data}")
             continue
         
         request_id = request.get("request_id")
@@ -93,12 +95,13 @@ async def process_request(request):
     timestamp_processed = time.time()
     
     # Include the timestamp in the request data
-    request_with_timestamp = request.copy()  # Create a copy of the original request
-    request_with_timestamp["timestamp_processed"] = timestamp_processed
-    
+    response = request.copy()  # Create a copy of the original request
+    response["timestamp_processed"] = timestamp_processed
+    response["response_message"]=f"Processed message with Reqeust ID {request.get('request_id')} and incoming message: {request.get('incoming_message')}"
+    response["vapi_response"] = create_vapi_response(response["response_message"])
     logging.info("Request processing completed.")
 
-    return request_with_timestamp
+    return response
 
 
 
@@ -147,31 +150,34 @@ async def extract_request_data(request: Request):
 
 async def stream_all_responses_chunked(request_id: str, server_url_secret: Optional[str] = None):
 
-    """Stream all processed responses from Redis until the specific `request_id` is found."""
+    """Stream all processed responses from Redis until the specific `request_id` is found.
+    optional filter by server_url_secret"""
 
     max_retries = 30  # Maximum retries before exiting the loop
     retries = 0  # Track the number of retries
 
     while retries < max_retries:
-        keys = await app.redis.keys("responses:*")  # Get all response keys
+        response_ids = await app.redis.keys("responses:*")  # Get all response keys
         
         found_request_id = False  # Flag to determine if request_id is found
         
         # Process each key and yield responses
-        for key in keys:
-            responses = await app.redis.lrange(key, 0, -1)
+        for response_id in response_ids:
+            responses = await app.redis.lrange(response_id, 0, -1)
             
             for response_data in responses:
                 response = json.loads(response_data)
-                if "timestamp_processed" in response:
-                    yield f"data: {json.dumps(response['timestamp_processed'])}\n\n"  # Yield the response data
+                if "timestamp_processed" in response:   
+                    logging.info(f'Found response with request_id: {request_id}. Yielding chunk to output streamgenerator: {response["vapi_response"]}')
+                    yield f"data: {response['vapi_response']}\n\n"  # Yield the response data
+                    
                     
                     # Check if this response has the specific request_id
-                    if key.endswith(f":{request_id}"):
+                    if response_id.endswith(f":{request_id}"):
                         found_request_id = True
                     
                     # Remove the response after yielding
-                    await app.redis.lrem(key, 1, json.dumps(response))
+                    await app.redis.lrem(response_id, 1, json.dumps(response))
         
         if found_request_id:
             break  # Exit loop if the specific request_id is found
@@ -180,9 +186,65 @@ async def stream_all_responses_chunked(request_id: str, server_url_secret: Optio
         await asyncio.sleep(1)  # Throttle re-checks to avoid busy-waiting
 
 
+def create_vapi_response(message, request_id=None, timestamp=None, end_of_conversation=False):
+    # Generate UUID for response_id if not provided
+    if request_id is None:
+        request_id = str(uuid.uuid4())
+    
+    # Use current time for timestamp if not provided
+    if timestamp is None:
+        timestamp = int(time.time())
+
+    # Construct the response object
+    response = {
+        "id": request_id,
+        "choices": [
+            {
+                "delta": {
+                    "content": message,
+                    "function_call": None,
+                    "role": None,
+                    "tool_calls": None
+                },
+                "finish_reason": "stop" if end_of_conversation else None,
+                "index": 0,
+                "logprobs": None
+            }
+        ],
+        "created": timestamp,
+        "model": "memgpt-custom-model",
+        "object": "chat.completion.chunk",
+        "system_fingerprint": None
+    }
+    
+    # Convert to JSON and add data prefix for streaming
+    json_data = json.dumps(response)
+    return json_data
+
+@app.post("/api/vapi")
+async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Header(None)):
+    if not x_vapi_secret:
+        logging.error("x-vapi-secret header is missing")
+        # Log all headers for debugging
+        headers = dict(request.headers)
+        logging.debug(f"All received headers: {headers}")
+        raise HTTPException(status_code=400, detail="x-vapi-secret header missing")
+
+    # Parse the x-vapi-secret to obtain the memgpt_user_api_key and default_agent_key
+    try:
+        memgpt_user_api_key, default_agent_key = x_vapi_secret.split(':')
+    except ValueError:
+        logging.error("Invalid x-vapi-secret format")
+        raise HTTPException(status_code=400, detail="Invalid x-vapi-secret format")
+
+    logging.info(f"User API Key: {memgpt_user_api_key}, Agent ID: {default_agent_key}")
+
+    incoming_request_data = await request.json()
+    logging.debug(f"Incoming data: {incoming_request_data}")
+    #TBD: build out call end data handler, etc. here
 
 
-@app.post("/stream")
+@app.post("/stream-test")
 async def receive_and_stream_voice_input(request: Request):
     data = await request.json()  # Get the JSON from the request
     user_id = str(uuid.uuid4())  # Generate a user ID

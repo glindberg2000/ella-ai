@@ -25,11 +25,25 @@ async def test_voice_input():
 
 import httpx
 import asyncio
+# Define default values
+DEFAULT_USER_ID = "d48465a1-8153-448d-9115-93fdaae4b290"
+DEFAULT_API_KEY = "sk-614ca012fa835acffa3879729c364124eba195fca46b190b"
+DEFAULT_AGENT_ID = "31b3722a-ebc1-418a-9056-4ef780d2f494"
 
 # Asynchronous function to test streaming with a POST request
 async def test_voice_input2():
-    url = 'http://localhost:8000/stream'
-    data = {'text': 'Hi, 37.', 'id':'myidentifier'}
+    url = 'http://localhost:9000/memgpt-sse/chat/completions'
+    data = {
+    "call": {
+        "serverUrlSecret": str(DEFAULT_API_KEY)+':'+str(DEFAULT_AGENT_ID)
+    },
+    "messages": [
+        {"content": "First message"},
+        {"content": "Second message"},
+        {"content": "Third message"}
+        ]
+    }
+
     headers = {'Content-Type': 'application/json'}
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None)) as client:
