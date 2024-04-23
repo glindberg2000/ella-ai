@@ -40,9 +40,50 @@ async def shutdown_event():
     """Close the Redis connection on application shutdown."""
     await app.redis.close()
 
-async def queue_request(server_url_secret, user_api_key, agent_id, latest_message):
-    """Queue a new request in Redis with a unique `request_id`."""
-    request_id = str(uuid.uuid4()) #Poetentially extract from VAPI instead
+# async def queue_request(server_url_secret, user_api_key, agent_id, latest_message, request_id):
+#     """Queue a new request in Redis with a unique `request_id`."""
+#     #request_id = str(uuid.uuid4()) #Poetentially extract from VAPI instead
+#     await app.redis.lpush("requests", json.dumps({
+#         "request_id": request_id,
+#         "incoming_message": latest_message,
+#         "timestamp_created": time.time(),
+#         "server_url_secret": server_url_secret,
+#         "user_api_key": user_api_key,
+#         "agent_id": agent_id,
+#         "raw_message_placeholder": None #Placeholder if you want to save the entire request
+#     }))
+#     return request_id
+
+
+async def queue_request(server_url_secret, user_api_key, agent_id, latest_message, request_id):
+    """Queue a new request in Redis with a unique `request_id` or return the existing response if already processed.
+
+    Args:
+        redis: Redis client instance.
+        server_url_secret (str): The secret key for the server URL.
+        user_api_key (str): The user's API key.
+        agent_id (str): The agent's ID.
+        latest_message (str): The latest incoming message.
+        request_id (str): The unique identifier for the request.
+
+    Returns:
+        str: The `request_id` if the request was queued successfully or found in the output database.
+    """
+    # Check if a response already exists in the responses database
+    existing_response = await app.redis.lindex(f"responses:{request_id}", 0)  # Direct key access
+    if existing_response:
+        logging.info(f"Existing response found for request_id: {request_id}. No need to queue a new request.")
+        return request_id  # Existing response already processed
+
+    # Check if the request ID is in the request queue
+    existing_request = await app.redis.lrange("requests", 0, -1)  # Looping through the queue to check
+    for req in existing_request:
+        request_data = json.loads(req)
+        if request_data["request_id"] == request_id:
+            logging.info(f"Request with this ID already in the queue: {request_id}.")
+            return request_id
+
+    # Queue a new request if the ID is unique
     await app.redis.lpush("requests", json.dumps({
         "request_id": request_id,
         "incoming_message": latest_message,
@@ -50,9 +91,12 @@ async def queue_request(server_url_secret, user_api_key, agent_id, latest_messag
         "server_url_secret": server_url_secret,
         "user_api_key": user_api_key,
         "agent_id": agent_id,
-        "raw_message_placeholder": None #Placeholder if you want to save the entire request
+        "raw_message_placeholder": None
     }))
-    return request_id
+    
+    logging.info(f"New request queued with request_id: {request_id}.")
+    return request_id  # Successfully queued new request
+
 
 
 async def send_message_to_agent(agent_id, message, user_api_key):
@@ -74,14 +118,16 @@ async def send_message_to_agent(agent_id, message, user_api_key):
 async def worker_process():
     """Background worker process to consume requests, process them, and store responses."""
     while True:
-        logging.info("Checking for requests in Redis...")
+        print ('.', end='')
+        #logging.info("Checking for requests in Redis...")
 
         # Retrieve the latest request data from Redis
         raw_data = await app.redis.rpop("requests")
 
         if not raw_data:
-            logging.info("No requests found. Sleeping for 1 second.")
-            await asyncio.sleep(1)
+            #print ('.')
+            #logging.info(".")
+            await asyncio.sleep(.1)
             continue
         
         # Decode the raw data
@@ -208,14 +254,61 @@ async def process_request(req_data):
     return processed_result
 
 
+# async def extract_request_data(request: Request):
+#     """Extracts necessary data from the incoming request.
+
+#     Args:
+#         request (Request): The incoming FastAPI request object.
+
+#     Returns:
+#         tuple: A tuple containing user_api_key, default_agent_id, and latest_message.
+
+#     Raises:
+#         HTTPException: If any required data is missing or in an invalid format.
+#     """
+#     # Extract the full incoming request data
+#     incoming_request_data = await request.json()
+#     logging.info(f'Full incoming request data: {incoming_request_data}')
+
+#     # Extract serverUrlSecret
+#     try:
+#         server_url_secret = incoming_request_data['call']['serverUrlSecret']
+#         logging.info(f'Extracted serverUrlSecret: {server_url_secret}')
+#     except KeyError as e:
+#         logging.error(f'serverUrlSecret not found in the expected call configuration: {str(e)}')
+#         raise HTTPException(status_code=400, detail="serverUrlSecret is missing from the call configuration")
+
+#     # Split serverUrlSecret into user API key and default agent ID
+#     try:
+#         user_api_key, default_agent_id = server_url_secret.split(':')
+#         logging.info(f'Extracted user API key: {user_api_key} and default agent ID: {default_agent_id}')
+#     except ValueError:
+#         logging.error("Invalid serverUrlSecret format. Expected format 'user_api_key:default_agent_id'")
+#         raise HTTPException(status_code=400, detail="Invalid serverUrlSecret format")
+
+#     # Extract the latest message
+#     try:
+#         latest_message = incoming_request_data['messages'][-1]['content']
+#         logging.info(f'Latest message from Vapi: {latest_message}')
+#     except (KeyError, IndexError, TypeError) as e:
+#         logging.error("Failed to extract the latest message due to improper data structure.")
+#         raise HTTPException(status_code=400, detail=f"Error in message data: {str(e)}")
+
+#     return server_url_secret, user_api_key, default_agent_id, latest_message
+
+
+import hashlib
+import logging
+from fastapi import Request, HTTPException
+
 async def extract_request_data(request: Request):
-    """Extracts necessary data from the incoming request.
+    """Extracts necessary data from the incoming request and generates a unique hash.
 
     Args:
         request (Request): The incoming FastAPI request object.
 
     Returns:
-        tuple: A tuple containing user_api_key, default_agent_id, and latest_message.
+        tuple: A tuple containing server_url_secret, user_api_key, default_agent_id, latest_message, and unique_hash.
 
     Raises:
         HTTPException: If any required data is missing or in an invalid format.
@@ -248,7 +341,18 @@ async def extract_request_data(request: Request):
         logging.error("Failed to extract the latest message due to improper data structure.")
         raise HTTPException(status_code=400, detail=f"Error in message data: {str(e)}")
 
-    return server_url_secret, user_api_key, default_agent_id, latest_message
+    # Generate a unique hash based on the callId and concatenated message content
+    try:
+        call_id = incoming_request_data['call']['callId']
+        messages_content = ''.join(msg['content'] for msg in incoming_request_data['messages'])
+        unique_hash = hashlib.sha256(f"{server_url_secret}-{messages_content}".encode()).hexdigest()
+        logging.info(f'Generated unique hash: {unique_hash}')
+    except KeyError:
+        logging.error("Failed to generate unique hash due to missing callId or messages.")
+        raise HTTPException(status_code=400, detail="Error generating unique hash")
+
+    return server_url_secret, user_api_key, default_agent_id, latest_message, unique_hash
+
 
 
 async def stream_all_responses_chunked(request_id: str, server_url_secret: Optional[str] = None):
@@ -256,10 +360,11 @@ async def stream_all_responses_chunked(request_id: str, server_url_secret: Optio
     """Stream all processed responses from Redis until the specific `request_id` is found.
     optional filter by server_url_secret"""
 
-    max_retries = 30  # Maximum retries before exiting the loop
+    max_retries = 1000  # Maximum retries before exiting the loop
     retries = 0  # Track the number of retries
 
     while retries < max_retries:
+        print(retries,end=' ')
         response_ids = await app.redis.keys("responses:*")  # Get all response keys
         
         found_request_id = False  # Flag to determine if request_id is found
@@ -286,7 +391,7 @@ async def stream_all_responses_chunked(request_id: str, server_url_secret: Optio
             break  # Exit loop if the specific request_id is found
         
         retries += 1  # Increment retries if no data is found
-        await asyncio.sleep(1)  # Throttle re-checks to avoid busy-waiting
+        await asyncio.sleep(.1)  # Throttle re-checks to avoid busy-waiting
 
 
 def create_vapi_response(message, request_id=None, timestamp=None, end_of_conversation=False):
@@ -365,8 +470,8 @@ async def receive_and_stream_voice_input(request: Request):
 @app.post("/memgpt-sse/chat/completions")
 async def custom_memgpt_sse_handler(request: Request):
     try:
-        server_url_secret, user_api_key, agent_id, latest_message = await extract_request_data(request)
-        request_id = await queue_request(server_url_secret, user_api_key, agent_id, latest_message)
+        server_url_secret, user_api_key, agent_id, latest_message, unique_hash = await extract_request_data(request)
+        request_id = await queue_request(server_url_secret, user_api_key, agent_id, latest_message, unique_hash)
         logging.info(f"Received request - User API Key: {user_api_key}, Agent ID: {agent_id}, Latest Message: {latest_message}, Request ID: {request_id}")
         return StreamingResponse(stream_all_responses_chunked(request_id, server_url_secret), media_type="text/event-stream")
     except HTTPException as he:
