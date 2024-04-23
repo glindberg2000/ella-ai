@@ -8,23 +8,36 @@ import json
 from dotenv import load_dotenv
 from prettytable import PrettyTable
 import textwrap
-
+import logging
 
 # Add the ella_dbo directory to the path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ella_dbo')))
+#sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ella_dbo')))
+
 
 # Import the database management functions from db_manager module
-from db_manager import (
+from ella_dbo.db_manager import (
     create_connection,
     get_user_data_by_memgpt_id
 )
 
 
-# Load environment variables from .env file one directory above
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-load_dotenv(dotenv_path=dotenv_path)
-api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
-base_url = os.getenv('MEMGPT_API_URL', 'http://localhost:8283')
+
+# Use an absolute path to the .env file
+project_dir = os.path.dirname(os.path.abspath(__file__))  # Current script's directory
+dotenv_path = os.path.join(project_dir, '.env')  # Adjust as needed
+
+import logging
+logging.basicConfig(level=logging.INFO)  # Ensure logging is set up
+
+logging.info("Loading dotenv from path: %s", dotenv_path)  # Confirm path
+load_dotenv(dotenv_path=dotenv_path)  # Load the .env file
+
+# Check if the environment variable is loaded
+api_key = os.getenv("MEMGPT_SERVER_PASS", "default_key")
+base_url = os.getenv('MEMGPT_API_URL', 'default_url')
+logging.info("API Key: %s", api_key)
+
+
 
 def get_messages_by_agent_row(user_api_key, user_id, agent_row, start=0, count=10):
     agents = list_agents(user_api_key, user_id)  # Ensure this function returns a list

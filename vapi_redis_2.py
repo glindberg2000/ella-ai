@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
-
+from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import StreamingResponse, Response
 import uuid
 import asyncio
@@ -10,16 +9,24 @@ from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 import logging
 from typing import Optional
+import httpx
+from ella_memgpt.extendedRESTclient import ExtendedRESTClient
+from memgpt.client.client import RESTClient as memgpt_client
 
 # Logging configuration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+debug = True  # Turn on debug mode to see detailed logs
 
 app = FastAPI()
 
 # Redis connection
 redis_url = f"redis://:{os.getenv('REDIS_PASSWORD')}@localhost:6379"
+
+# MemGPT connection
+# Load environment variables from .env file
+base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
 
 @app.on_event("startup")
 async def startup_event():
@@ -33,7 +40,7 @@ async def shutdown_event():
     """Close the Redis connection on application shutdown."""
     await app.redis.close()
 
-async def queue_request(latest_message, server_url_secret: Optional[str] = None):
+async def queue_request(server_url_secret, user_api_key, agent_id, latest_message):
     """Queue a new request in Redis with a unique `request_id`."""
     request_id = str(uuid.uuid4()) #Poetentially extract from VAPI instead
     await app.redis.lpush("requests", json.dumps({
@@ -41,68 +48,164 @@ async def queue_request(latest_message, server_url_secret: Optional[str] = None)
         "incoming_message": latest_message,
         "timestamp_created": time.time(),
         "server_url_secret": server_url_secret,
+        "user_api_key": user_api_key,
+        "agent_id": agent_id,
         "raw_message_placeholder": None #Placeholder if you want to save the entire request
     }))
     return request_id
 
 
+async def send_message_to_agent(agent_id, message, user_api_key):
+    url = f"{base_url}/api/agents/{agent_id}/messages"
+    payload = {"stream": False,
+               "message": message,
+                "role": "user"}
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "authorization": f"Bearer {user_api_key}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers)
+        return response
+    
 
 async def worker_process():
     """Background worker process to consume requests, process them, and store responses."""
     while True:
         logging.info("Checking for requests in Redis...")
 
-        # Use `rpop` to retrieve the latest request by `request_id`
-        request_data = await app.redis.rpop("requests")
+        # Retrieve the latest request data from Redis
+        raw_data = await app.redis.rpop("requests")
 
-        if not request_data:
+        if not raw_data:
             logging.info("No requests found. Sleeping for 1 second.")
             await asyncio.sleep(1)
             continue
         
+        # Decode the raw data
         try:
-            request = json.loads(request_data)
+            req_data = json.loads(raw_data)
         except json.JSONDecodeError:
             logging.error("Failed to decode request data.")
-            logging.error(f"Request data: {request_data}")
+            logging.error(f"Request data: {raw_data}")
             continue
         
-        request_id = request.get("request_id")
+        request_id = req_data.get("request_id")
         if not request_id:
             logging.error("Request data missing 'request_id'.")
             continue
         
-        logging.info(f"Found request with request_id: {request_id}. Processing...")
+        logging.info(f"Processing request with ID: {request_id}")
 
-        # Simulate processing e.g. sending message to memgpt and checking for resopnse
-        processed_response = await process_request(request)
+        # Process the request data
+        processed_response = await process_request(req_data)
         
         # Store the processed response with `request_id`
-        await app.redis.rpush(f"responses:{request_id}", json.dumps({
-            **processed_response
-        }))
+        await app.redis.rpush(f"responses:{request_id}", json.dumps(processed_response))
         logging.info(f"Stored processed response with request_id: {request_id}.")
 
 
-async def process_request(request):
-    """Simulate processing a request with a backend LLM or other processing logic."""
-    logging.info("Processing request...")
+# async def process_request_dummy(req_data):
+#     """Simulate processing a request with backend logic."""
 
-    # Simulate processing time
-    time.sleep(2)
-
-    # Add a timestamp to indicate when the processing was completed
-    timestamp_processed = time.time()
+#     # Simulate processing time
+#     time.sleep(2)
     
-    # Include the timestamp in the request data
-    response = request.copy()  # Create a copy of the original request
-    response["timestamp_processed"] = timestamp_processed
-    response["response_message"]=f"Processed message with Reqeust ID {request.get('request_id')} and incoming message: {request.get('incoming_message')}"
-    response["vapi_response"] = create_vapi_response(response["response_message"])
-    logging.info("Request processing completed.")
+#     # Add a timestamp to indicate when the processing was completed
+#     timestamp_processed = time.time()
+    
+#     # Create a copy of the original data and add the timestamp
+#     response = req_data.copy()
+#     response["timestamp_processed"] = timestamp_processed
+#     response["response_message"] = f"Processed message with Request ID {req_data.get('request_id')}"
+    
+#     logging.info("Request processing completed.")
 
-    return response
+#     return response
 
+def assistant_messages(json_data):
+    # Extract all assistant messages
+    messages = [item["assistant_message"] for item in json_data if "assistant_message" in item]
+    
+    # Join messages with proper punctuation
+    assistant_messages = " ".join(message.rstrip(".,!") + "." for message in messages)
+    
+    return assistant_messages
+
+async def process_request(req_data):
+    # Extract and validate required data from req_data
+    request_id = req_data.get("request_id", None)
+    incoming_message = req_data.get("incoming_message", None)
+    user_api_key = req_data.get("user_api_key", None)
+    agent_id = req_data.get("agent_id", None)
+    timestamp_created = req_data.get("timestamp_created", None)       
+    raw_message_placeholder = req_data.get("raw_message_placeholder", None)
+    server_url_secret = req_data.get("server_url_secret", None)
+
+    # Ensure that the critical data is not missing
+    if not request_id:
+        raise ValueError("The 'request_id' is required but not found in the request data.")
+
+    if not incoming_message:
+        raise ValueError("The 'incoming_message' is required but not found in the request data.")
+
+    if not user_api_key:
+        raise ValueError("The 'user_api_key' is missing but is expected in the request data.")
+
+    if not agent_id:
+        raise ValueError("The 'agent_id' is missing but is expected in the request data.")
+
+    #user_api = ExtendedRESTClient(base_url, user_api_key, debug)
+    user_api = memgpt_client(base_url, user_api_key, debug)
+
+ #Call the send_message function and unpack the result
+    try:
+        user_message_response = user_api.send_message(agent_id, incoming_message, "user", False)
+
+        # Extract details from the UserMessageResponse
+        message_details = user_message_response.messages  # Get the messages list
+        logging.info(f"Message details from worker process: {message_details}")
+
+
+        # Return a relevant HTTP response with the unpacked result
+        # return {
+        #     "status": "success",
+        #     "message_details": message_details
+        # }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+    #     def user_message(self, agent_id: str, message: str) -> Union[List[Dict], Tuple[List[Dict], int]]:
+    #     return self.send_message(agent_id, message, role="user")
+            # def send_message(self, agent_id: uuid.UUID, message: str, role: str, stream: Optional[bool] = False) -> UserMessageResponse:
+            # data = {"message": message, "role": role, "stream": stream}
+            # response = requests.post(f"{self.base_url}/api/agents/{agent_id}/messages", json=data, headers=self.headers)
+            # return UserMessageResponse(**response.json())
+
+    timestamp_processed = time.time()
+    #response_message = f"Processing message with ID: {request_id}"
+    response_message = assistant_messages(message_details)
+    # # Example processing with all required data
+    processed_result = {
+        "request_id": request_id,
+        "incoming_message": incoming_message,
+        "response_message": response_message,
+        "inner_monologue": None,
+        "server_url_secret": server_url_secret,
+        "user_api_key": user_api_key,
+        "agent_id": agent_id,
+        "timestamp_created": timestamp_created,
+        "timestamp_processed" :timestamp_processed,
+        "vapi_response": create_vapi_response(response_message,request_id=request_id, timestamp=timestamp_processed)
+    }
+
+
+
+    return processed_result
 
 
 async def extract_request_data(request: Request):
@@ -263,7 +366,7 @@ async def receive_and_stream_voice_input(request: Request):
 async def custom_memgpt_sse_handler(request: Request):
     try:
         server_url_secret, user_api_key, agent_id, latest_message = await extract_request_data(request)
-        request_id = await queue_request(latest_message, server_url_secret)
+        request_id = await queue_request(server_url_secret, user_api_key, agent_id, latest_message)
         logging.info(f"Received request - User API Key: {user_api_key}, Agent ID: {agent_id}, Latest Message: {latest_message}, Request ID: {request_id}")
         return StreamingResponse(stream_all_responses_chunked(request_id, server_url_secret), media_type="text/event-stream")
     except HTTPException as he:

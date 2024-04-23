@@ -210,7 +210,8 @@ async def on_chat_start():
     await cl.Message(content=custom_message, author=CHATBOT_NAME).send()
 
 
-# Assuming the guardian_agent_analysis function returns a string (the note) or None
+# Assuming the guardian_agent_analysis function returns a string (the note) or None,
+# TBD: replace with Autogen Teachable Agent with pre prompt hook
 def guardian_agent_analysis(message_content):
     logging.info(f"Guardian Agent Analysis called for message: {message_content}")
     if "medication" in message_content.lower():
