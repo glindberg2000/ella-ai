@@ -1,0 +1,3 @@
+[submodule "memgpt"]
+	path = memgpt
+	url = https://github.com/glindberg2000/MemGPT.git
