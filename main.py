@@ -1,7 +1,10 @@
 import logging
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-# Configure the root logger to log debug information
-logging.basicConfig(level=logging.INFO)
 import json
 import os
 from typing import Any, AsyncGenerator, Dict, Optional
@@ -41,17 +44,13 @@ from ella_dbo.db_manager import (
     get_user_data,
     upsert_user
 )
-from openai_proxy import router as openai_proxy_router
+#from openai_proxy import router as openai_proxy_router
 
 
 debug = True  # Turn on debug mode to see detailed logs
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
-app.include_router(openai_proxy_router, prefix="/api")
+
+#app.include_router(openai_proxy_router, prefix="/api")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -71,13 +70,16 @@ DEFAULT_AGENT_CONFIG = {
 }
 CHATBOT_NAME = "Ella AI"
 
-from chainlit.context import init_http_context
+# from chainlit.context import init_http_context
 
+from vapi_voice import *
+# Mount imported endpoints to the FastAPI app
+# app.include_router(vapi_call_handler())
+# app.include_router(custom_memgpt_sse_handler())
 
-import logging
-
-# Set up basic configuration for logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+@app.get("/test")
+async def test_endpoint2():
+    return {"message": "Hello, world!"}
 
 @app.get("/voice-chat")
 async def new_test_page():

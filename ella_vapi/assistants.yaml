@@ -56,7 +56,7 @@ templates:
     numWordsToInterruptAssistant: 2
     maxDurationSeconds: 1800
     backgroundSound: "off"
-    name: "Ella"
+    name: "Ella AI"
     firstMessage: "Hello, can you hear me?"
     voicemailDetectionEnabled: true
     voicemailMessage: "Hi, it's me, Ella. Just trying to reach you. Call back when you can. Talk to you soon."

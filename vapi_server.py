@@ -99,20 +99,20 @@ async def queue_request(server_url_secret, user_api_key, agent_id, latest_messag
 
 
 
-async def send_message_to_agent(agent_id, message, user_api_key):
-    url = f"{base_url}/api/agents/{agent_id}/messages"
-    payload = {"stream": False,
-               "message": message,
-                "role": "user"}
-    headers = {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "authorization": f"Bearer {user_api_key}"
-    }
+# async def send_message_to_agent(agent_id, message, user_api_key):
+#     url = f"{base_url}/api/agents/{agent_id}/messages"
+#     payload = {"stream": False,
+#                "message": message,
+#                 "role": "user"}
+#     headers = {
+#         "accept": "application/json",
+#         "content-type": "application/json",
+#         "authorization": f"Bearer {user_api_key}"
+#     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, headers=headers)
-        return response
+#     async with httpx.AsyncClient() as client:
+#         response = await client.post(url, json=payload, headers=headers)
+#         return response
     
 
 async def worker_process():
@@ -153,23 +153,6 @@ async def worker_process():
         logging.info(f"Stored processed response with request_id: {request_id}.")
 
 
-# async def process_request_dummy(req_data):
-#     """Simulate processing a request with backend logic."""
-
-#     # Simulate processing time
-#     time.sleep(2)
-    
-#     # Add a timestamp to indicate when the processing was completed
-#     timestamp_processed = time.time()
-    
-#     # Create a copy of the original data and add the timestamp
-#     response = req_data.copy()
-#     response["timestamp_processed"] = timestamp_processed
-#     response["response_message"] = f"Processed message with Request ID {req_data.get('request_id')}"
-    
-#     logging.info("Request processing completed.")
-
-#     return response
 
 def assistant_messages(json_data):
     # Extract all assistant messages
@@ -207,22 +190,33 @@ async def process_request(req_data):
     user_api = memgpt_client(base_url, user_api_key, debug)
 
  #Call the send_message function and unpack the result
+ # Log the data before sending the message
+    
+
     try:
+        # Attempt to send the message to the agent and get the response
+        logging.debug(f"Sending message to agent: {agent_id}, incoming message: {incoming_message}, user API key: {user_api_key}")
         user_message_response = user_api.send_message(agent_id, incoming_message, "user", False)
 
-        # Extract details from the UserMessageResponse
-        message_details = user_message_response.messages  # Get the messages list
-        logging.info(f"Message details from worker process: {message_details}")
-
-
-        # Return a relevant HTTP response with the unpacked result
-        # return {
-        #     "status": "success",
-        #     "message_details": message_details
-        # }
-
+        # Check if the response has the "messages" attribute
+        if hasattr(user_message_response, 'messages'):
+            message_details = user_message_response.messages
+            logging.debug(f"Received message details: {message_details}")
+        else:
+            # Handle the case where "messages" is missing
+            logging.warning("Response from user_api.send_message did not contain 'messages' attribute.")
+            if hasattr(user_message_response, 'detail'):
+                # Log the error detail if present
+                logging.warning(f"Response contained error detail: {user_message_response.detail}")
+            else:
+                # General error message if no other detail is provided
+                logging.warning("Unknown error in response from user_api.send_message.")
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Exception when sending message to agent: {str(e)}")
+        # Raise the exception or handle it appropriately
+        raise
+
     
 
     #     def user_message(self, agent_id: str, message: str) -> Union[List[Dict], Tuple[List[Dict], int]]:
@@ -343,9 +337,17 @@ async def extract_request_data(request: Request):
 
     # Generate a unique hash based on the callId and concatenated message content
     try:
-        call_id = incoming_request_data['call']['callId']
-        messages_content = ''.join(msg['content'] for msg in incoming_request_data['messages'])
-        unique_hash = hashlib.sha256(f"{server_url_secret}-{messages_content}".encode()).hexdigest()
+        call_id = incoming_request_data['call']['callId'] #this might get regenerated on reconnect
+        
+        # Truncate the last two messages to reduce duplicate risk
+        truncated_messages = incoming_request_data['messages'][:0]  # Excluding the last two messages
+
+        # Concatenate the truncated message contents for hashing
+        message_content = ''.join(msg['content'] for msg in truncated_messages)
+
+        # Create a unique hash using SHA-256
+        unique_hash = hashlib.sha256(message_content.encode()).hexdigest()
+
         logging.info(f'Generated unique hash: {unique_hash}')
     except KeyError:
         logging.error("Failed to generate unique hash due to missing callId or messages.")
@@ -429,6 +431,10 @@ def create_vapi_response(message, request_id=None, timestamp=None, end_of_conver
     json_data = json.dumps(response)
     return json_data
 
+@app.get("/test")
+async def test_endpoint():
+    return {"message": "Hello, world!"}
+
 @app.post("/api/vapi")
 async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Header(None)):
     if not x_vapi_secret:
@@ -477,3 +483,27 @@ async def custom_memgpt_sse_handler(request: Request):
     except HTTPException as he:
         logging.error(f"Failed to extract request data: {he}")
         raise he
+
+
+
+
+
+
+
+# async def process_request_dummy(req_data):
+#     """Simulate processing a request with backend logic."""
+
+#     # Simulate processing time
+#     time.sleep(2)
+    
+#     # Add a timestamp to indicate when the processing was completed
+#     timestamp_processed = time.time()
+    
+#     # Create a copy of the original data and add the timestamp
+#     response = req_data.copy()
+#     response["timestamp_processed"] = timestamp_processed
+#     response["response_message"] = f"Processed message with Request ID {req_data.get('request_id')}"
+    
+#     logging.info("Request processing completed.")
+
+#     return response
