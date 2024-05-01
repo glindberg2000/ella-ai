@@ -65,3 +65,6 @@ tree.txt
 
 openapi_assistants.json
 openapi_memgpt.json
+
+token.json
+credentials.json
