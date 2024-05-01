@@ -72,14 +72,10 @@ CHATBOT_NAME = "Ella AI"
 
 # from chainlit.context import init_http_context
 
-from vapi_voice import *
-# Mount imported endpoints to the FastAPI app
-# app.include_router(vapi_call_handler())
-# app.include_router(custom_memgpt_sse_handler())
 
-@app.get("/test")
-async def test_endpoint2():
-    return {"message": "Hello, world!"}
+# @app.get("/test")
+# async def test_endpoint2():
+#     return {"message": "Hello, world!"}
 
 @app.get("/voice-chat")
 async def new_test_page():
@@ -105,6 +101,21 @@ def handle_default_agent(memgpt_user_id, user_api):
         raise
 
 
+def get_phone_from_email(email):
+    # Convert the email to a format suitable for environment variable names
+    key = 'USER_' + email.replace('@', '_').replace('.', '_') + '_PHONE'
+    # Convert the entire key to upper case
+    key = key.upper()
+    # Log the generated key to help with debugging
+    logging.debug(f"Generated environment variable key: {key}")
+    phone = os.getenv(key)
+    if phone:
+        logging.info(f"Phone number retrieved for {email}: {phone}")
+    else:
+        logging.warning(f"No phone number found for {email} using key {key}")
+    return phone
+
+
 @cl.oauth_callback
 async def oauth_callback(
     provider_id: str,
@@ -122,7 +133,15 @@ async def oauth_callback(
     # Database operations
     conn = create_connection()
     create_table(conn)
-    memgpt_user_id, memgpt_user_api_key, default_agent_key, vapi_assistant_id = get_user_data(conn, auth0_user_id)
+
+    # Retrieve user data including the new fields
+    try:
+        memgpt_user_id, memgpt_user_api_key, email, phone, default_agent_key, vapi_assistant_id = get_user_data(conn, auth0_user_id)
+        logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: MemGPT User ID = {memgpt_user_id}, API Key = {memgpt_user_api_key}, Email = {email}, Phone = {phone}, Default Agent Key = {default_agent_key}, VAPI Assistant ID = {vapi_assistant_id}")
+    except Exception as e:
+        logging.error(f"Failed to retrieve user data for Auth0 user ID {auth0_user_id}: {e}")
+
+
 
     # MemGPT and VAPI Assistant Setup
     if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id:
@@ -144,6 +163,7 @@ async def oauth_callback(
             # Check for default agent
             user_api = ExtendedRESTClient(base_url, memgpt_user_api_key, debug)
             default_agent_key = handle_default_agent(memgpt_user_id, user_api)
+            logging.info(f"Default agent key: {default_agent_key}")
 
         if not vapi_assistant_id:
             # Create VAPI Assistant using the VAPIClient and a preset template
@@ -155,36 +175,63 @@ async def oauth_callback(
             await vapi_client.close()
             logging.info(f"VAPI Assistant created with ID: {vapi_assistant_id}")
 
+    # Check and update email and phone if necessary
+    if not email and user_email is not None:
+        email = user_email
+        logging.info(f"Retrieved email from user data: {email}")
 
-   # Update the database with new or existing data
-    upsert_user(
-        conn,
-        auth0_user_id=auth0_user_id,
-        roles=roles_str,
-        email=user_email,
-        name=user_name,
-        memgpt_user_id=memgpt_user_id,
-        memgpt_user_api_key=memgpt_user_api_key,
-        default_agent_key=default_agent_key,
-        vapi_assistant_id=vapi_assistant_id
-    )
-    conn.close()
+    if not phone:  # Check environment variable for a matching email-phone pair
+        env_phone = get_phone_from_email(email)  # Assuming environment variables are named after emails
+        logging.info(f"Retrieved phone number from environment variable: {env_phone}")
+        phone = env_phone if env_phone else None
 
-    custom_user = cl.User(
-        identifier=user_name,
-        metadata={
-            "auth0_user_id": auth0_user_id,
-            "email": user_email,
-            "name": user_name,
-            "roles": user_roles,
-            "memgpt_user_id": str(memgpt_user_id),  # Ensure this is a string
-            "memgpt_user_api_key": str(memgpt_user_api_key),  # Ensure this is a string
-            "default_agent_key": str(default_agent_key),  # Ensure this is a string
-            "vapi_assistant_id": str(vapi_assistant_id)  # Ensure this is a string
-        }
-    )
 
-    return custom_user
+    try:
+        # Log the data before the upsert operation
+        logging.info(f"Preparing to upsert data for Auth0 user ID {auth0_user_id}: "
+                    f"Roles: {roles_str}, Email: {email}, Phone: {phone}, "
+                    f"Name: {user_name}, MemGPT User ID: {memgpt_user_id}, "
+                    f"MemGPT API Key: {memgpt_user_api_key}, Default Agent Key: {default_agent_key}, "
+                    f"VAPI Assistant ID: {vapi_assistant_id}")
+
+        # Upsert the updated user data into the database
+        upsert_user(
+            conn,
+            auth0_user_id=auth0_user_id,
+            roles=roles_str,
+            email=email,
+            phone=phone,
+            name=user_name,
+            memgpt_user_id=memgpt_user_id,
+            memgpt_user_api_key=memgpt_user_api_key,
+            default_agent_key=default_agent_key,
+            vapi_assistant_id=vapi_assistant_id
+        )
+        logging.info("Upsert operation completed successfully.")
+    except Exception as e:
+            logging.error(f"Database error during upsert: {e}")
+    finally:
+        conn.close()
+        logging.info("Database connection closed.")
+
+        # Create and return the custom user object
+        custom_user = cl.User(
+            identifier=user_name,
+            metadata={
+                "auth0_user_id": auth0_user_id,
+                "email": email,
+                "name": user_name,
+                "roles": user_roles,
+                "memgpt_user_id": str(memgpt_user_id),
+                "memgpt_user_api_key": str(memgpt_user_api_key),
+                "default_agent_key": str(default_agent_key),
+                "vapi_assistant_id": str(vapi_assistant_id),
+                "phone": phone  # Added phone to metadata if you want to include it
+            }
+        )
+
+        return custom_user
+
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -206,8 +253,10 @@ async def on_chat_start():
         logging.error(f"Authentication check failed: {e}")
 
     user_name = app_user.metadata.get("name", "Unknown Name")
+    phone=app_user.metadata.get("phone", "Unknown Phone")
+    user_email = app_user.metadata.get("email", "Unknown Email")
     display_message = f"Successfuly loaded roles: {roles}"
-    custom_message = f"Hello {user_name}, {display_message}"
+    custom_message = f"Hello {user_name}, {display_message}, Phone number on file: {phone}, Email: {user_email}"
 
     await cl.Message(content=custom_message, author=CHATBOT_NAME).send()
 

@@ -13,46 +13,57 @@ import httpx
 from ella_memgpt.extendedRESTclient import ExtendedRESTClient
 from memgpt.client.client import RESTClient as memgpt_client
 
-# Logging configuration
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from contextlib import asynccontextmanager
 
-debug = True  # Turn on debug mode to see detailed logs
 
-app = FastAPI()
-
-# Redis connection
-redis_url = f"redis://:{os.getenv('REDIS_PASSWORD')}@localhost:6379"
 
 # MemGPT connection
 # Load environment variables from .env file
 base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the Redis connection on application startup."""
-    app.redis = Redis.from_url(redis_url, decode_responses=True, encoding='utf-8')
-    logging.info("Starting background worker task...")
-    asyncio.create_task(worker_process())  # Start the worker as a background task
+# Logging configuration
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close the Redis connection on application shutdown."""
-    await app.redis.close()
+debug = True  # Turn on debug mode to see detailed logs
+# Context manager to handle the lifespan of the app
 
-# async def queue_request(server_url_secret, user_api_key, agent_id, latest_message, request_id):
-#     """Queue a new request in Redis with a unique `request_id`."""
-#     #request_id = str(uuid.uuid4()) #Poetentially extract from VAPI instead
-#     await app.redis.lpush("requests", json.dumps({
-#         "request_id": request_id,
-#         "incoming_message": latest_message,
-#         "timestamp_created": time.time(),
-#         "server_url_secret": server_url_secret,
-#         "user_api_key": user_api_key,
-#         "agent_id": agent_id,
-#         "raw_message_placeholder": None #Placeholder if you want to save the entire request
-#     }))
-#     return request_id
+
+@asynccontextmanager
+async def vapi_app_lifespan(vapi_app: FastAPI):
+    # Redis connection
+    redis_url = f"redis://:{os.getenv('REDIS_PASSWORD')}@localhost:6379"
+    # Initialize Redis connection
+    vapi_app.redis = Redis.from_url(redis_url, decode_responses=True, encoding='utf-8')
+    
+    # Start the background task that depends on Redis
+    task = asyncio.create_task(worker_process())
+    vapi_app.state.background_task = task
+
+    try:
+        yield
+    finally:
+        # First, cancel and wait for the background task to finish
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                # Task cancellation is expected on shutdown
+                pass
+
+        # Then, safely close the Redis connection
+        if vapi_app.redis:
+            try:
+                await vapi_app.redis.close()
+            except Exception as e:
+                print(f"Error closing Redis connection: {e}")
+
+
+# Assign the lifespan context manager to the FastAPI instance
+vapi_app = FastAPI(lifespan=vapi_app_lifespan)
+vapi_app.router.lifespan_context = vapi_app_lifespan
+
 
 
 async def queue_request(server_url_secret, user_api_key, agent_id, latest_message, request_id):
@@ -70,13 +81,13 @@ async def queue_request(server_url_secret, user_api_key, agent_id, latest_messag
         str: The `request_id` if the request was queued successfully or found in the output database.
     """
     # Check if a response already exists in the responses database
-    existing_response = await app.redis.lindex(f"responses:{request_id}", 0)  # Direct key access
+    existing_response = await vapi_app.redis.lindex(f"responses:{request_id}", 0)  # Direct key access
     if existing_response:
         logging.info(f"Existing response found for request_id: {request_id}. No need to queue a new request.")
         return request_id  # Existing response already processed
 
     # Check if the request ID is in the request queue
-    existing_request = await app.redis.lrange("requests", 0, -1)  # Looping through the queue to check
+    existing_request = await vapi_app.redis.lrange("requests", 0, -1)  # Looping through the queue to check
     for req in existing_request:
         request_data = json.loads(req)
         if request_data["request_id"] == request_id:
@@ -84,7 +95,7 @@ async def queue_request(server_url_secret, user_api_key, agent_id, latest_messag
             return request_id
 
     # Queue a new request if the ID is unique
-    await app.redis.lpush("requests", json.dumps({
+    await vapi_app.redis.lpush("requests", json.dumps({
         "request_id": request_id,
         "incoming_message": latest_message,
         "timestamp_created": time.time(),
@@ -122,7 +133,7 @@ async def worker_process():
         #logging.info("Checking for requests in Redis...")
 
         # Retrieve the latest request data from Redis
-        raw_data = await app.redis.rpop("requests")
+        raw_data = await vapi_app.redis.rpop("requests")
 
         if not raw_data:
             #print ('.')
@@ -149,7 +160,7 @@ async def worker_process():
         processed_response = await process_request(req_data)
         
         # Store the processed response with `request_id`
-        await app.redis.rpush(f"responses:{request_id}", json.dumps(processed_response))
+        await vapi_app.redis.rpush(f"responses:{request_id}", json.dumps(processed_response))
         logging.info(f"Stored processed response with request_id: {request_id}.")
 
 
@@ -367,13 +378,13 @@ async def stream_all_responses_chunked(request_id: str, server_url_secret: Optio
 
     while retries < max_retries:
         print(retries,end=' ')
-        response_ids = await app.redis.keys("responses:*")  # Get all response keys
+        response_ids = await vapi_app.redis.keys("responses:*")  # Get all response keys
         
         found_request_id = False  # Flag to determine if request_id is found
         
         # Process each key and yield responses
         for response_id in response_ids:
-            responses = await app.redis.lrange(response_id, 0, -1)
+            responses = await vapi_app.redis.lrange(response_id, 0, -1)
             
             for response_data in responses:
                 response = json.loads(response_data)
@@ -387,7 +398,7 @@ async def stream_all_responses_chunked(request_id: str, server_url_secret: Optio
                         found_request_id = True
                     
                     # Remove the response after yielding
-                    await app.redis.lrem(response_id, 1, json.dumps(response))
+                    await vapi_app.redis.lrem(response_id, 1, json.dumps(response))
         
         if found_request_id:
             break  # Exit loop if the specific request_id is found
@@ -431,11 +442,11 @@ def create_vapi_response(message, request_id=None, timestamp=None, end_of_conver
     json_data = json.dumps(response)
     return json_data
 
-@app.get("/test")
+@vapi_app.get("/test")
 async def test_endpoint():
     return {"message": "Hello, world!"}
 
-@app.post("/api/vapi")
+@vapi_app.post("/api")
 async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Header(None)):
     if not x_vapi_secret:
         logging.error("x-vapi-secret header is missing")
@@ -458,7 +469,7 @@ async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Hea
     #TBD: build out call end data handler, etc. here
 
 
-@app.post("/stream-test")
+@vapi_app.post("/stream-test")
 async def receive_and_stream_voice_input(request: Request):
     data = await request.json()  # Get the JSON from the request
     user_id = str(uuid.uuid4())  # Generate a user ID
@@ -473,7 +484,7 @@ async def receive_and_stream_voice_input(request: Request):
     return StreamingResponse(stream_all_responses_chunked(request_id=request_id),media_type="text/event-stream")
 
 
-@app.post("/memgpt-sse/chat/completions")
+@vapi_app.post("/memgpt-sse/chat/completions")
 async def custom_memgpt_sse_handler(request: Request):
     try:
         server_url_secret, user_api_key, agent_id, latest_message, unique_hash = await extract_request_data(request)
