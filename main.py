@@ -8,14 +8,17 @@ logger = logging.getLogger(__name__)
 import json
 import os
 from typing import Any, AsyncGenerator, Dict, Optional
-
 import jwt
 # Your secret key for signing the JWT - keep it secure and do not expose it
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 
 from chainlit.server import app
-from dotenv import load_dotenv
+import chainlit as cl
+from chainlit.user import User
+from chainlit.user_session import user_session
+
+
 from fastapi import HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -25,32 +28,20 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-
-import chainlit as cl
-from chainlit.user import User
-from chainlit.user_session import user_session
-
+from dotenv import load_dotenv
 
 from ella_memgpt.extendedRESTclient import ExtendedRESTClient
 from memgpt.client.admin import Admin as AdminRESTClient
 from ella_memgpt.memgpt_admin import create_memgpt_user_and_api_key, manage_agents
 from ella_vapi.vapi_client import VAPIClient
-
-
-# Import the database management functions from db_manager module
 from ella_dbo.db_manager import (
     create_connection,
     create_table,
     get_user_data,
     upsert_user
 )
-#from openai_proxy import router as openai_proxy_router
-
 
 debug = True  # Turn on debug mode to see detailed logs
-
-
-#app.include_router(openai_proxy_router, prefix="/api")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -83,22 +74,46 @@ async def new_test_page():
         url="https://vapi.ai/?demo=true&shareKey=c87ea74e-bebf-4196-aebb-fbd77d5f28c0&assistantId=7d444afe-1c8b-4708-8f45-5b6592e60b47"
     )
 
+
+def read_file_contents(file_path: str) -> str:
+    """
+    Read the contents of a file given its full path.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            return file.read()
+    except FileNotFoundError:
+        logging.error(f"File not found: {file_path}")
+        return None
+
 def handle_default_agent(memgpt_user_id, user_api):
     logging.info(f"Checking for default agent for user {memgpt_user_id}")
     try:
         agent_info = user_api.list_agents()
         if not agent_info.num_agents:
             logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
-            agent_response = user_api.create_agent()  # This should return an object with an AgentState attribute
-            default_agent_key = agent_response.id  # Access attributes directly
+
+            # Read the contents of the persona and human templates
+            base_dir = os.path.expanduser("~/.memgpt")
+            human_content = read_file_contents(os.path.join(base_dir, "humans", "plato.txt"))
+            persona_content = read_file_contents(os.path.join(base_dir, "personas", "ella_persona.txt"))
+
+            if human_content is None or persona_content is None:
+                logging.error("Failed to read human or persona files.")
+                raise FileNotFoundError("Required template files are missing.")
+
+            # Create an agent with the contents of the templates
+            agent_response = user_api.create_agent(preset="ella_preset", human=human_content, persona=persona_content)
+            default_agent_key = agent_response.id
             logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id}")
         else:
-            default_agent_key = agent_info.agents[0].id  # Assume agents is a list of objects, not dictionaries
+            default_agent_key = agent_info.agents[0].id
             logging.info(f"Multiple agents found for user {memgpt_user_id}. Selecting first agent found: {default_agent_key}")
         return default_agent_key
     except Exception as e:
         logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
         raise
+
 
 
 def get_phone_from_email(email):
@@ -114,6 +129,51 @@ def get_phone_from_email(email):
     else:
         logging.warning(f"No phone number found for {email} using key {key}")
     return phone
+
+
+def update_agent_memory(base_url: str, memgpt_user_api_key: str, default_agent_key: str, memgpt_user_id: str):
+    """
+    Update the agent's core memory with the specified details.
+
+    Parameters:
+    - base_url: str, the base URL for the MemGPT REST API.
+    - memgpt_user_api_key: str, the API key for authenticating with MemGPT.
+    - default_agent_key: str, the key for the agent whose memory is to be updated.
+    - memgpt_user_id: str, the user ID to inject into the memory.
+    """
+    # Initialize the REST client
+    user_api = ExtendedRESTClient(base_url, memgpt_user_api_key)
+
+    # Fetch the existing memory
+    agent_memory = user_api.get_agent_memory(default_agent_key)
+    logging.info(f"Existing Agent Memory: {agent_memory}")
+
+    # Extract core_memory object
+    core_memory = agent_memory.core_memory
+    existing_human = core_memory.human
+    existing_persona = core_memory.persona
+
+    # New data to inject
+    user_id = memgpt_user_id
+    agent_key = default_agent_key
+
+    # Prepare the new memory contents
+    new_memory_contents = {}
+
+    # Check if user_id is already in the human memory
+    if f"user_id: {user_id}" not in existing_human:
+        new_memory_contents["human"] = f"user_id: {user_id}\n{existing_human}"
+
+    # Check if agent_key is already in the persona memory
+    if f"agent_key: {agent_key}" not in existing_persona:
+        new_memory_contents["persona"] = f"agent_key: {agent_key}\n{existing_persona}"
+
+    # Update the agent memory with the new memory contents if there are any changes
+    if new_memory_contents:
+        updated_memory = user_api.update_agent_core_memory(default_agent_key, new_memory_contents)
+        logging.info(f"Updated Agent Core Memory: {updated_memory}")
+    else:
+        logging.info("No changes required for agent memory.")
 
 
 @cl.oauth_callback
@@ -185,6 +245,8 @@ async def oauth_callback(
         logging.info(f"Retrieved phone number from environment variable: {env_phone}")
         phone = env_phone if env_phone else None
 
+    # Update the user data in the memgpt core memory
+    update_agent_memory(base_url, memgpt_user_api_key, default_agent_key, memgpt_user_id)
 
     try:
         # Log the data before the upsert operation
@@ -208,6 +270,7 @@ async def oauth_callback(
             vapi_assistant_id=vapi_assistant_id
         )
         logging.info("Upsert operation completed successfully.")
+
     except Exception as e:
             logging.error(f"Database error during upsert: {e}")
     finally:

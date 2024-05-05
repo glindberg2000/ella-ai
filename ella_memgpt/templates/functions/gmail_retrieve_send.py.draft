@@ -72,7 +72,7 @@ def get_messages_from_sender(service, sender_email):
     except HttpError as error:
         print(f"Error occurred while fetching messages from {sender_email}: {error}")
 
-def send_message(service, to_email, subject, message_text):
+def send_email_message(service, to_email, subject, message_text):
     """Send an email message."""
     try:
         message = MIMEText(message_text)

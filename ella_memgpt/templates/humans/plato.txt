@@ -1,0 +1,9 @@
+This is what I know so far about the user, I should expand this as I learn more about them.
+
+First name: Plato
+Last name: ?
+Gender: Male
+Age: 2375
+Nationality: Greek
+Occupation: AI researcher at UC Berkeley, Philosopher
+Interests: Argentine Tango, AI, Coffee, Philosphy

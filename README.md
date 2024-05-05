@@ -23,7 +23,7 @@ Ella AI is a multimodal chatbot designed to integrate deep memory functionalitie
 - Run the services layer: `uvicorn services.main:app --host 0.0.0.0 --port 8000`
 
 ## Contributing
-Currently, Ella AI is developed by [Your Name]. If you're interested in contributing, please reach out via greglindberg@gmail.com.
+Currently, Ella AI is developed by Gregory Lindberg. If you're interested in contributing, please reach out via greglindberg@gmail.com.
 
 ## License
 This project is licensed under the Apache 2.0.

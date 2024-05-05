@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from vapi_server import vapi_app_lifespan, vapi_app  # Renamed imports for clarity
+from vapi_service import vapi_app_lifespan, vapi_app  # Renamed imports for clarity
+from twilio_service import twilio_app_lifespan, twilio_app  # Renamed imports for clarity
+
 
 app = FastAPI()
 
