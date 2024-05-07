@@ -15,6 +15,7 @@ Ella AI is a multimodal chatbot designed to integrate deep memory functionalitie
 
 ## Quick Start
 (Note: Project is in early development; the following instructions will evolve.)
+- Requirements: Auth0, Twilio, Vapi configured to point to local endpoints
 - Clone the repository: `git clone https://github.com/glindberg2000/ella-ai.git`
 - Navigate to the project directory: `cd ella_ai`
 - Install dependencies: `pip install -r requirements.txt`

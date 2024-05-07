@@ -77,7 +77,44 @@ def clean_text(text):
     # Strip leading and trailing spaces and replace multiple spaces with a single space
     return ' '.join(text.split())
 
+# def get_messages_by_agent_id(user_api_key, agent_id, start=0, count=10):
+#     url = f"{base_url}/api/agents/{agent_id}/messages?start={start}&count={count}"
+#     headers = {
+#         "accept": "application/json",
+#         "authorization": f"Bearer {user_api_key}"
+#     }
+#     response = requests.get(url, headers=headers)
+#     if response.status_code == 200:
+#         messages_data = json.loads(response.text)
+#         if 'messages' in messages_data and messages_data['messages']:
+#             table = PrettyTable()
+#             table.field_names = ["Message ID", "Role", "Text", "Tool Calls", "Timestamp"]
+#             for message in messages_data['messages']:
+#                 if message:
+#                     # Handle potentially nested JSON in the 'text' field
+#                     text_content = parse_nested_json(message.get('text', ''))
+                    
+#                     # Extract and format tool call details if present
+#                     tool_calls = message.get('tool_calls')
+#                     tool_call_details = "\n".join(textwrap.wrap(json.dumps(tool_calls, indent=4), 50)) if tool_calls else "None"
+                    
+#                     # Add cleaned and wrapped data to the table
+#                     table.add_row([
+#                         clean_text(message.get('id', 'N/A')),
+#                         clean_text(message.get('role', 'N/A')),
+#                         clean_text(text_content),
+#                         clean_text(tool_call_details),
+#                         clean_text(message.get('created_at', 'N/A'))
+#                     ])
+#             print(table)
+#         else:
+#             print("No messages found.")
+#     else:
+#         print(f"Error fetching messages for agent {agent_id}: {response.status_code} - {response.text}")
+
+
 def get_messages_by_agent_id(user_api_key, agent_id, start=0, count=10):
+    """Fetch and display messages for a given agent, with pagination."""
     url = f"{base_url}/api/agents/{agent_id}/messages?start={start}&count={count}"
     headers = {
         "accept": "application/json",
@@ -89,16 +126,15 @@ def get_messages_by_agent_id(user_api_key, agent_id, start=0, count=10):
         if 'messages' in messages_data and messages_data['messages']:
             table = PrettyTable()
             table.field_names = ["Message ID", "Role", "Text", "Tool Calls", "Timestamp"]
+            table.max_width = 30  # Adjust max width as needed
+
             for message in messages_data['messages']:
                 if message:
-                    # Handle potentially nested JSON in the 'text' field
-                    text_content = parse_nested_json(message.get('text', ''))
-                    
-                    # Extract and format tool call details if present
+                    text_content = parse_nested_json(message.get('text', ''), wrap_width=30)
+
                     tool_calls = message.get('tool_calls')
-                    tool_call_details = "\n".join(textwrap.wrap(json.dumps(tool_calls, indent=4), 50)) if tool_calls else "None"
-                    
-                    # Add cleaned and wrapped data to the table
+                    tool_call_details = "\n".join(textwrap.wrap(json.dumps(tool_calls, indent=4), 30)) if tool_calls else "None"
+
                     table.add_row([
                         clean_text(message.get('id', 'N/A')),
                         clean_text(message.get('role', 'N/A')),
@@ -106,11 +142,16 @@ def get_messages_by_agent_id(user_api_key, agent_id, start=0, count=10):
                         clean_text(tool_call_details),
                         clean_text(message.get('created_at', 'N/A'))
                     ])
+
+            # Paginate and display the table
+            total_messages = len(messages_data['messages'])
+            print(f"Displaying messages {start + 1} to {min(start + count, total_messages)} of {total_messages} for agent {agent_id}")
             print(table)
         else:
             print("No messages found.")
     else:
         print(f"Error fetching messages for agent {agent_id}: {response.status_code} - {response.text}")
+
 
 
 def list_agents(user_api_key,user_id):
