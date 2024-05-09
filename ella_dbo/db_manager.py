@@ -211,6 +211,31 @@ def get_user_data_by_phone(conn, phone_number):
     print('get_user_data_by_phone result: ', result)
     return (result[0], result[1], result[2], result[3], result[4], result[5]) if result else (None, None, None, None, None, None)
 
+def get_user_data_by_email(conn, email):
+    """
+    Retrieve user data by an email address.
+
+    Parameters:
+    - conn: The database connection object.
+    - email: The email address to search for.
+
+    Returns:
+    - A tuple containing the user details if found, None otherwise.
+    """
+    print('get_user_data_by_email() called')
+    sql = """
+    SELECT memgpt_user_id, memgpt_user_api_key, email, phone, default_agent_key, vapi_assistant_id 
+    FROM users 
+    WHERE email LIKE ?
+    """
+    cur = conn.cursor()
+    # Use SQL LIKE clause to match the email exactly
+    cur.execute(sql, (email,))
+    result = cur.fetchone()
+    print('get_user_data_by_email result: ', result)
+    return (result[0], result[1], result[2], result[3], result[4], result[5]) if result else (None, None, None, None, None, None)
+
+
 def print_all_records(conn):
     """Print all records from the users table."""
     print('printing all records from users table: ')

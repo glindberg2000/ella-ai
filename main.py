@@ -48,17 +48,12 @@ load_dotenv()
 base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8283")
 master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
 openai_api_key = os.getenv("OPENAI_API_KEY", "defaultopenaikey")
+default_preset = os.getenv('DEFAULT_PRESET', 'ella_3')
 
 # Define default values
-DEFAULT_USER_ID = "d48465a1-8153-448d-9115-93fdaae4b290"
-DEFAULT_API_KEY = "sk-614ca012fa835acffa3879729c364124eba195fca46b190b"
-DEFAULT_AGENT_ID = "31b3722a-ebc1-418a-9056-4ef780d2f494"
-DEFAULT_AGENT_CONFIG = {
-    "name": "DefaultAgent5",
-    "preset": "memgpt_chat",
-    "human": "cs_phd",
-    "persona": "anna_pa",
-}
+DEFAULT_API_KEY = os.getenv("DEFAULT_API_KEY", "000000")
+DEFAULT_AGENT_ID = os.getenv("DEFAULT_AGENT_ID", "000000")
+
 CHATBOT_NAME = "Ella AI"
 
 # from chainlit.context import init_http_context
@@ -103,7 +98,7 @@ def handle_default_agent(memgpt_user_id, user_api):
                 raise FileNotFoundError("Required template files are missing.")
 
             # Create an agent with the contents of the templates
-            agent_response = user_api.create_agent(preset="ella_preset", human=human_content, persona=persona_content)
+            agent_response = user_api.create_agent(preset=default_preset, human=human_content, persona=persona_content)
             default_agent_key = agent_response.id
             logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id}")
         else:
@@ -347,8 +342,6 @@ def guardian_agent_analysis2(message_content):
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    user_api_key = DEFAULT_API_KEY
-    #agent_id = DEFAULT_AGENT_ID
 
     # Attempt to access user details from the cl.User object
     try:
