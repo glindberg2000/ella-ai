@@ -37,7 +37,7 @@ from ella_vapi.vapi_client import VAPIClient
 from ella_dbo.db_manager import (
     create_connection,
     create_table,
-    get_user_data,
+    get_user_data_by_field,
     upsert_user
 )
 
@@ -189,13 +189,31 @@ async def oauth_callback(
     conn = create_connection()
     create_table(conn)
 
-    # Retrieve user data including the new fields
+  # Retrieve user data including the new fields
     try:
-        memgpt_user_id, memgpt_user_api_key, email, phone, default_agent_key, vapi_assistant_id = get_user_data(conn, auth0_user_id)
-        logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: MemGPT User ID = {memgpt_user_id}, API Key = {memgpt_user_api_key}, Email = {email}, Phone = {phone}, Default Agent Key = {default_agent_key}, VAPI Assistant ID = {vapi_assistant_id}")
+        user_data = get_user_data_by_field(conn, 'auth0_user_id', auth0_user_id)
+        if user_data:
+            memgpt_user_id = user_data.get('memgpt_user_id', None)
+            memgpt_user_api_key = user_data.get('memgpt_user_api_key', None)
+            email = user_data.get('email', None)
+            phone = user_data.get('phone', None)
+            default_agent_key = user_data.get('default_agent_key', None)
+            vapi_assistant_id = user_data.get('vapi_assistant_id', None)
+            calendar_id = user_data.get('calendar_id', None)
+        else:
+            # Handle the case where no data is found
+            print("No user data found for the provided ID")
+            memgpt_user_id = None
+            memgpt_user_api_key = None
+            email = None
+            phone = None
+            default_agent_key = None
+            vapi_assistant_id = None
+            calendar_id = None
+
+        logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: MemGPT User ID = {memgpt_user_id}, API Key = {memgpt_user_api_key}, Email = {email}, Phone = {phone}, Default Agent Key = {default_agent_key}, VAPI Assistant ID = {vapi_assistant_id}, Calendar ID = {calendar_id}")
     except Exception as e:
         logging.error(f"Failed to retrieve user data for Auth0 user ID {auth0_user_id}: {e}")
-
 
 
     # MemGPT and VAPI Assistant Setup
@@ -254,7 +272,8 @@ async def oauth_callback(
         # Upsert the updated user data into the database
         upsert_user(
             conn,
-            auth0_user_id=auth0_user_id,
+            "auth0_user_id",
+            auth0_user_id,
             roles=roles_str,
             email=email,
             phone=phone,
@@ -262,7 +281,8 @@ async def oauth_callback(
             memgpt_user_id=memgpt_user_id,
             memgpt_user_api_key=memgpt_user_api_key,
             default_agent_key=default_agent_key,
-            vapi_assistant_id=vapi_assistant_id
+            vapi_assistant_id=vapi_assistant_id,
+            calendar_id=calendar_id
         )
         logging.info("Upsert operation completed successfully.")
 
@@ -284,7 +304,8 @@ async def oauth_callback(
                 "memgpt_user_api_key": str(memgpt_user_api_key),
                 "default_agent_key": str(default_agent_key),
                 "vapi_assistant_id": str(vapi_assistant_id),
-                "phone": phone  # Added phone to metadata if you want to include it
+                "phone": phone,  # Added phone to metadata if you want to include it
+                "calendar_id": calendar_id  # Added calendar_id to metadata if you want to include it"
             }
         )
 

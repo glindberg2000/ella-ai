@@ -37,7 +37,7 @@ templates:
       language: en-US
     model:
       provider: custom-llm
-      url: "https://chat.ella-ai-care.com/vapi/memgpt-sse"
+      url: "https://chat.ella-ai-care.com:8443/vapi/memgpt-sse"
       urlRequestMetadataEnabled: true
       model: gpt-4
       temperature: 0
@@ -63,6 +63,6 @@ templates:
     endCallMessage: "Talk to you later."
     endCallPhrases:
       - "Bye Bye"
-    serverUrl: "https://chat.ella-ai-care.com/vapi/api"
+    serverUrl: "https://chat.ella-ai-care.com:8443/vapi/api"
     serverUrlSecret: "x-vapi-secret-changeme"
 

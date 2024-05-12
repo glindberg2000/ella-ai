@@ -130,7 +130,7 @@ async def worker_process():
     """Background worker process to consume requests, process them, and store responses."""
     logging.info(f"Started Worker process...")
     while True:
-        #print ('.', end='')
+        print ('.', end='')
         #logging.info("Checking for requests in Redis...")
 
         # Retrieve the latest request data from Redis

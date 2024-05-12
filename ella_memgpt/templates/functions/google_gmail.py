@@ -3,36 +3,33 @@ import os
 import traceback
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-# Add the ella_dbo path to sys.path
+import base64
+from dotenv import load_dotenv
+# # Add the ella_dbo path to sys.path
 import sys
 ella_dbo_path = os.path.expanduser("~/dev/ella_ai/ella_dbo")
 sys.path.insert(0, ella_dbo_path)
-
-# Attempt to import the db_manager functions
+# # Attempt to import the db_manager functions
 try:
     from db_manager import (
         create_connection,
-        get_all_user_data_by_memgpt_id,
+        get_user_data_by_field,
+        #get_all_user_data_by_memgpt_id,
         close_connection
     )
     print("Successfully imported from db_manager located in ~/dev/ella_ai/ella_dbo.")
 except ImportError as e:
     print("Error: Unable to import db_manager. Check your path and module structure.")
     raise e
-import os
-import base64
-from dotenv import load_dotenv
-
 # Load environment variables from .env file
 load_dotenv()
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send"
 ]
 GMAIL_TOKEN_PATH = os.path.expanduser("~/.memgpt/gmail_token.json")
-#DEFAULT_SENDER_EMAIL = os.getenv("DEFAULT_SENDER_EMAIL", "default@example.com")
 
-def send_email_message(self, memgpt_user_id: str, subject: str = "Hello!", body: str = "Hello, this is a test email.") -> str:
+def send_email_message(self, memgpt_user_id: str, subject: str = "Hello!", body: str = "Hello, this is a test email.", message_id: str = None) -> str:
     """
     Send an email message via the Gmail API using a MemGPT user ID.
 
@@ -40,50 +37,72 @@ def send_email_message(self, memgpt_user_id: str, subject: str = "Hello!", body:
         memgpt_user_id (str): The MemGPT user ID stored in the database.
         subject (str): The subject of the email. Default is "Hello!".
         body (str): The email message content to send. Default is "Hello, this is a test email."
+        message_id (str, optional): The original message ID for referencing the original email thread. If provided, 
+                                    this message will be considered a reply and the subject will be prefixed with 'RE:'.
 
     Returns:
         str: The status message indicating success or failure.
     """
-    # Function to retrieve the sender's email address from the Gmail profile
+    # Function to retrieve the sender's email address
     def get_sender_email(service):
-        """
-        Retrieve the authenticated sender's email address using the Gmail API.
-
-        Args:
-            service: The Gmail API service instance.
-
-        Returns:
-            str: The authenticated user's email address.
-        """
         try:
-            # Use the 'users.getProfile' endpoint to get the authenticated user's email address
             profile = service.users().getProfile(userId='me').execute()
-            sender_email = profile['emailAddress']
-            return sender_email
-
+            return profile['emailAddress']
         except Exception as e:
             logging.error(f"Error retrieving sender's email: {e}")
             traceback.print_exc()
             return None
 
+    # Function to retrieve the original email subject and content
+    def retrieve_original_email(service, msg_id):
+        try:
+            message = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+            payload = message.get('payload', {})
+            headers = payload.get('headers', [])
+            parts = payload.get('parts', [])
+            original_subject = "[Original subject not available]"
+            original_body = "[Original email content not available]"
+
+            # Extract original subject from headers
+            for header in headers:
+                if header.get('name', '').lower() == 'subject':
+                    original_subject = header.get('value', "[Original subject not available]")
+
+            # Extract original body
+            if parts:
+                data = parts[0].get('body', {}).get('data', '')
+            else:
+                data = payload.get('body', {}).get('data', '')
+
+            if data:
+                original_body = base64.urlsafe_b64decode(data).decode('utf-8')
+
+            return original_subject, original_body
+        except Exception as e:
+            logging.error(f"Error retrieving original email: {e}")
+            traceback.print_exc()
+            return "[Original subject not available]", "[Failed to retrieve original email]"
+
     conn = create_connection()
     try:
-        # Retrieve the user data associated with the MemGPT user ID
-        user_data = get_all_user_data_by_memgpt_id(conn, memgpt_user_id)
-        if not user_data or not user_data[2]:  # Assuming recipient email is at index 2 in user data
+        # Retrieve user data using MemGPT ID
+        #user_data = get_all_user_data_by_memgpt_id(conn, memgpt_user_id)
+        user_data = get_user_data_by_field(conn, "memgpt_user_id", memgpt_user_id)
+        email = user_data.get('email', None) 
+        if not user_data or not email:  
             logging.error("Could not retrieve a valid recipient email address from the database.")
             return "Message failed: No valid recipient email address available."
 
-        recipient_email = user_data[2]
+        recipient_email = email
 
-        # Load the Gmail API credentials
+        # Load Gmail API credentials
         if os.path.exists(GMAIL_TOKEN_PATH):
             creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
         else:
             logging.error("Gmail credentials file not found.")
             return "Message failed: Gmail credentials file not found."
 
-        # Create a Gmail API service instance
+        # Create Gmail API service instance
         service = build("gmail", "v1", credentials=creds)
 
         # Retrieve the sender's email address
@@ -91,6 +110,12 @@ def send_email_message(self, memgpt_user_id: str, subject: str = "Hello!", body:
         if not sender_email:
             logging.error("Could not retrieve the authenticated sender's email address.")
             return "Message failed: Could not retrieve sender email."
+
+        # If a message ID is provided, fetch the original subject and content, then prepend "RE:" to the subject
+        if message_id:
+            original_subject, original_content = retrieve_original_email(service, message_id)
+            subject = f"RE: {original_subject}"
+            body = f"{body}\n\n--- Original Message ---\n{original_content}"
 
         # Build the email message
         message = {
@@ -100,7 +125,7 @@ def send_email_message(self, memgpt_user_id: str, subject: str = "Hello!", body:
         }
 
         try:
-            # Send the message using the Gmail API
+            # Send the message via the Gmail API
             sent_message = service.users().messages().send(userId="me", body=message).execute()
             logging.info(f"Message sent to {recipient_email}: {sent_message['id']}")
             return "Message was successfully sent."
@@ -112,7 +137,6 @@ def send_email_message(self, memgpt_user_id: str, subject: str = "Hello!", body:
 
     finally:
         close_connection(conn)
-
 
 # TEST
 # import logging

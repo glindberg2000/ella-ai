@@ -8,6 +8,7 @@ import os.path
 import traceback
 from typing import Optional
 import datetime
+import logging
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -15,20 +16,39 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-import logging
+# Add the ella_dbo path to sys.path
+import sys
+ella_dbo_path = os.path.expanduser("~/dev/ella_ai/ella_dbo")
+sys.path.insert(0, ella_dbo_path)
+# Attempt to import the db_manager functions
+try:
+    from db_manager import (
+        create_connection,
+        get_user_data_by_field,
+        upsert_user,
+        close_connection
+    )
+    print("Successfully imported from db_manager located in ~/dev/ella_ai/ella_dbo.")
+except ImportError as e:
+    print("Error: Unable to import db_manager. Check your path and module structure.")
+    raise e
 
-# Configure logging at the start of your application
-logging.basicConfig(
-    level=logging.INFO,  # Adjust the logging level as needed
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # If modifying these scopes, delete the file token.json.
 # SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 TOKEN_PATH = os.path.expanduser("~/.memgpt/gcal_token.json")
 CREDENTIALS_PATH = os.path.expanduser("~/.memgpt/google_api_credentials.json")
+
+# Configure logging at the start of your application
+logging.basicConfig(
+    level=logging.INFO,  # Adjust the logging level as needed
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Setup logger
+logger = logging.getLogger(__name__)
+
 
 
 def schedule_event(
@@ -37,38 +57,69 @@ def schedule_event(
     title: str,
     start: str,
     end: str,
-    description: Optional[str] = None,
+    description: Optional[str] = None
 ) -> str:
     """
-    Schedule an event on the Google Calendar corresponding to the unique 'user_id' of the current user. If no calendar exists, a new one will be created using this 'user_id'.
+    Schedule an event and grant calendar access to a user.
 
     Args:
-        user_id (str): 'user_id' is an essential argument for the function to execute properly. It's the unique identifier of the current user, which should be retrieved from the core memory at runtime.
-        title (str): The event's name.
-        start (str): The start time of the event in ISO 8601 format (e.g. "2024-02-01T12:00:00-07:00").
-        end (str): The end time of the event in ISO 8601 format (e.g. "2024-02-01T13:00:00-07:00").
-        description (Optional[str]): An expanded description of the event.
+        user_id (str): The user ID used to retrieve the email for sharing.
+        title (str): Event name.
+        start (str): Event start time in ISO 8601 format.
+        end (str): Event end time in ISO 8601 format.
+        description (Optional[str]): Description of the event.
 
     Returns:
-        str: The status of the event scheduling request.
+        str: Status of the event scheduling request.
     """
 
-
     def get_or_create_user_calendar(service, user_id: str) -> str:
-        """Find or create a calendar for a specific user."""
         calendar_summary = f"User-{user_id}-Calendar"
-
-        # Check if a calendar already exists for this user
         calendars = service.calendarList().list().execute()
         for calendar in calendars["items"]:
             if calendar["summary"] == calendar_summary:
+                logger.info(f"Calendar {calendar_summary} already exists.")
                 return calendar["id"]
-
-        # If not, create a new calendar for the user
         new_calendar = {"summary": calendar_summary, "timeZone": "America/Los_Angeles"}
         created_calendar = service.calendars().insert(body=new_calendar).execute()
+
+        # Upsert the updated user data into the database
+        conn=create_connection()
+        upsert_user(
+            conn,
+            "memgpt_user_id",
+            user_id,
+            calendar_id=created_calendar["id"]
+        )
+        close_connection(conn)
+        logger.info(f"Successfully created calendar {created_calendar['id']}")
         return created_calendar["id"]
 
+    def set_calendar_permissions(service, calendar_id, user_email):
+        acl_rule = {'scope': {'type': 'user', 'value': user_email}, 'role': 'writer'}
+        service.acl().insert(calendarId=calendar_id, body=acl_rule).execute()
+        logger.info(f"Successfully shared calendar {calendar_id} with user {user_email}")
+
+    def get_user_email(user_id: str) -> Optional[str]:
+        conn = create_connection()
+        try:
+            user_data = get_user_data_by_field(conn, 'memgpt_user_id', user_id)
+            email = user_data.get('email', None)
+            return email
+        finally:
+            close_connection(conn)
+
+    def create_calendar_event(service, calendar_id, title, start, end, description):
+        event = {
+            "summary": title,
+            "start": {"dateTime": start, "timeZone": "America/Los_Angeles"},
+            "end": {"dateTime": end, "timeZone": "America/Los_Angeles"}
+        }
+        if description:
+            event["description"] = description
+        created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
+        return created_event.get('htmlLink')
+    
     creds = None
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
@@ -81,25 +132,20 @@ def schedule_event(
         with open(TOKEN_PATH, "w") as token:
             token.write(creds.to_json())
 
-    try:
-        service = build("calendar", "v3", credentials=creds)
-        calendar_id = get_or_create_user_calendar(service, user_id)
+    service = build("calendar", "v3", credentials=creds)
+    shared_user_email = get_user_email(user_id)
+    calendar_id = get_or_create_user_calendar(service, user_id)
 
-        event = {
-            "summary": title,
-            "start": {"dateTime": start, "timeZone": "America/Los_Angeles"},
-            "end": {"dateTime": end, "timeZone": "America/Los_Angeles"},
-        }
+    # Share the calendar if an email address is available
+    if shared_user_email:
+        set_calendar_permissions(service, calendar_id, shared_user_email)
+    else:
+        logger.info("No email address available at this time; the calendar will not be shared yet.")
 
-        if description is not None:
-            event["description"] = description
+    event_link = create_calendar_event(service, calendar_id, title, start, end, description)
+    return f"Event created: {event_link}"
 
-        event = service.events().insert(calendarId=calendar_id, body=event).execute()
-        return f"Event created: {event.get('htmlLink')}"
 
-    except HttpError as error:
-        traceback.print_exc()
-        return f"An error occurred while trying to create an event: {str(error)}"
 
 def fetch_upcoming_events(
     self,
@@ -119,16 +165,28 @@ def fetch_upcoming_events(
         list: A list of event summaries, start times, and IDs, or an error message if something goes wrong.
     """
 
-    def get_user_calendar(service, user_id: str) -> str:
-        """Retrieve the calendar ID of the specific user's calendar."""
+    def get_or_create_user_calendar(service, user_id: str) -> str:
         calendar_summary = f"User-{user_id}-Calendar"
-
         calendars = service.calendarList().list().execute()
         for calendar in calendars["items"]:
             if calendar["summary"] == calendar_summary:
+                logger.info(f"Calendar {calendar_summary} already exists.")
                 return calendar["id"]
+        new_calendar = {"summary": calendar_summary, "timeZone": "America/Los_Angeles"}
+        created_calendar = service.calendars().insert(body=new_calendar).execute()
 
-        raise ValueError(f"Calendar for user '{user_id}' not found!")
+        # Upsert the updated user data into the database
+        conn=create_connection()
+        upsert_user(
+            conn,
+            "memgpt_user_id",
+            user_id,
+            calendar_id=created_calendar["id"]
+        )
+        close_connection(conn)
+        logger.info(f"Successfully created calendar {created_calendar['id']}")
+        return created_calendar["id"]
+
 
     creds = None
     if os.path.exists(TOKEN_PATH):
@@ -144,7 +202,7 @@ def fetch_upcoming_events(
 
     try:
         service = build("calendar", "v3", credentials=creds)
-        calendar_id = get_user_calendar(service, user_id)
+        calendar_id = get_or_create_user_calendar(service, user_id)
 
         # Set default to the current time if not specified
         if not time_min:

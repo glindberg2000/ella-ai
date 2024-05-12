@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import uuid
+import argparse
 
 # Get the directory of the current file (__file__ is the path to the current script)
 current_dir = os.path.dirname(__file__)
@@ -18,6 +19,60 @@ def create_connection():
     except sqlite3.Error as e:
         print(e)
     return conn
+
+def get_user_data_by_field(conn, field_name, field_value):
+    """
+    Retrieve user data by a specified field and value, ensuring all relevant user fields are included.
+    
+    Parameters:
+    - conn: The database connection object.
+    - field_name: The field name to filter by.
+    - field_value: The value to match for the specified field.
+    
+    Returns:
+    - A dictionary containing the user details if found, None otherwise.
+    """
+    conn.row_factory = sqlite3.Row  # Set row factory to Row for dictionary-like access
+    cur = conn.cursor()
+    sql = f"SELECT * FROM users WHERE {field_name} = ?"
+    cur.execute(sql, (field_value,))
+    result = cur.fetchone()
+    if result:
+        return dict(result)
+    return None
+
+def upsert_user(conn, lookup_field, lookup_value, **kwargs):
+    print('upsert_user() called')
+    cur = conn.cursor()
+    try:
+        # Convert UUIDs to strings for storage and make sure lookup_value is also converted
+        converted_kwargs = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in kwargs.items()}
+        lookup_value = str(lookup_value) if isinstance(lookup_value, uuid.UUID) else lookup_value
+        
+        # Check if the record exists using the dynamic lookup field and value
+        cur.execute(f"SELECT COUNT(*) FROM users WHERE {lookup_field} = ?", (lookup_value,))
+        exists = cur.fetchone()[0] > 0
+        fields = list(converted_kwargs.keys())
+        values = list(converted_kwargs.values())
+
+        if exists:
+            updates = ', '.join(f"{k} = ?" for k in fields)
+            sql = f"UPDATE users SET {updates} WHERE {lookup_field} = ?"
+            params = values + [lookup_value]
+            cur.execute(sql, params)
+        else:
+            fields_str = ', '.join(fields)
+            placeholders = ', '.join('?' * len(kwargs))
+            sql = f"INSERT INTO users ({lookup_field}, {fields_str}) VALUES (?, {placeholders})"
+            params = [lookup_value] + values
+            cur.execute(sql, params)
+
+        conn.commit()
+        print('User upserted successfully.')
+    except Exception as e:
+        print(f"Database error during upsert: {e}")
+    finally:
+        cur.close()
 
 
 def get_all_user_data_by_memgpt_id(conn, memgpt_user_id):
@@ -42,8 +97,6 @@ def get_all_user_data_by_memgpt_id(conn, memgpt_user_id):
     result = cur.fetchone()
     print('get_user_data_by_memgpt_id result: ', result)
     return (result[0], result[1], result[2], result[3], result[4], result[5]) if result else (None, None, None, None, None, None)
-
-
 
 def get_user_data_by_memgpt_id(conn, memgpt_user_id):
     """
@@ -71,7 +124,7 @@ def get_user_data_by_memgpt_id(conn, memgpt_user_id):
     return (result[0], result[1], result[2]) if result else (None, None, None)
 
 def create_table(conn):
-    """Create tables to store user info, given a connection."""
+    """Create tables to store user info, including calendar ID and notification preferences, given a connection."""
     print('Creating table users...')
     create_users_table_sql = """
     CREATE TABLE IF NOT EXISTS users (
@@ -80,11 +133,14 @@ def create_table(conn):
         memgpt_user_id TEXT,
         memgpt_user_api_key TEXT,
         email TEXT,
-        phone TEXT,  -- Added phone field to store user phone numbers
+        phone TEXT,
         name TEXT,
         roles TEXT,
-        default_agent_key TEXT,  -- Store only the default agent key
-        vapi_assistant_id TEXT   -- Store field for storing VAPI assistant ID
+        default_agent_key TEXT,
+        vapi_assistant_id TEXT,
+        calendar_id TEXT,  -- New column to store the Google Calendar ID
+        default_reminder_time INTEGER DEFAULT 15,  -- Default reminder time in minutes before the event
+        reminder_method TEXT DEFAULT 'email'  -- Default method for sending reminders
     );"""
     try:
         c = conn.cursor()
@@ -92,37 +148,6 @@ def create_table(conn):
         print("Table created successfully or already exists.")
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
-
-def upsert_user(conn, auth0_user_id, **kwargs):
-    print('upsert_user() called')
-    cur = conn.cursor()
-    try:
-        # Convert UUIDs to strings for storage
-        converted_kwargs = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in kwargs.items()}
-        
-        cur.execute("SELECT COUNT(*) FROM users WHERE auth0_user_id = ?", (auth0_user_id,))
-        exists = cur.fetchone()[0] > 0
-        fields = list(converted_kwargs.keys())
-        values = list(converted_kwargs.values())
-
-        if exists:
-            updates = ', '.join(f"{k} = ?" for k in fields)
-            sql = f"UPDATE users SET {updates} WHERE auth0_user_id = ?"
-            params = values + [auth0_user_id]
-            cur.execute(sql, params)
-        else:
-            fields_str = ', '.join(fields)
-            placeholders = ', '.join('?' * len(converted_kwargs))
-            sql = f"INSERT INTO users (auth0_user_id, {fields_str}) VALUES (?, {placeholders})"
-            params = [auth0_user_id] + values
-            cur.execute(sql, params)
-
-        conn.commit()
-        print('User upserted successfully.')
-    except Exception as e:
-        print(f"Database error during upsert: {e}")
-    finally:
-        cur.close()
 
 def get_memgpt_user_id(conn, auth0_user_id):
     """
@@ -235,7 +260,6 @@ def get_user_data_by_email(conn, email):
     print('get_user_data_by_email result: ', result)
     return (result[0], result[1], result[2], result[3], result[4], result[5]) if result else (None, None, None, None, None, None)
 
-
 def print_all_records(conn):
     """Print all records from the users table."""
     print('printing all records from users table: ')
@@ -261,12 +285,35 @@ def close_connection(conn):
     if conn:
         conn.close()
 
+def set_value_to_none_by_email(conn, email, column_index):
+    columns = ["memgpt_user_id", "memgpt_user_api_key", "email", "phone", "default_agent_key", "vapi_assistant_id"]
+    if column_index < 0 or column_index >= len(columns):
+        print(f"Invalid column index: {column_index}. No action taken.")
+        return
+    column_name = columns[column_index]
+    sql = f"UPDATE users SET {column_name} = NULL WHERE email = ?"
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (email,))
+        conn.commit()
+        print(f"Successfully set {column_name} to None for user with email {email}.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        conn.rollback()
+
 def main():
-    print('main() called')
-    # Create a database connection
+    parser = argparse.ArgumentParser(description="Set a specific user field to None in the database by email.")
+    parser.add_argument("email", type=str, help="The email address of the user to modify.")
+    parser.add_argument("column_index", type=int, help="The index of the column to set to None (0-based).")
+    
+    args = parser.parse_args()
+    
     conn = create_connection()
-    print_tables (conn)
-    print_all_records(conn)
+    if conn is not None:
+        set_value_to_none_by_email(conn, args.email, args.column_index)
+        conn.close()
+    else:
+        print("Failed to establish a database connection.")
 
 if __name__ == "__main__":
     main()

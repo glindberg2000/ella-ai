@@ -9,7 +9,7 @@ GMAIL_TOKEN_PATH = os.path.expanduser("~/.memgpt/gmail_token.json")
 
 # Scopes required for Gmail API
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send"
 ]
 
