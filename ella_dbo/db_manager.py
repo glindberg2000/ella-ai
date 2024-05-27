@@ -124,7 +124,7 @@ def get_user_data_by_memgpt_id(conn, memgpt_user_id):
     return (result[0], result[1], result[2]) if result else (None, None, None)
 
 def create_table(conn):
-    """Create tables to store user info, including calendar ID and notification preferences, given a connection."""
+    """Create tables to store user info, including calendar ID, notification preferences, and active event count, given a connection."""
     print('Creating table users...')
     create_users_table_sql = """
     CREATE TABLE IF NOT EXISTS users (
@@ -138,9 +138,10 @@ def create_table(conn):
         roles TEXT,
         default_agent_key TEXT,
         vapi_assistant_id TEXT,
-        calendar_id TEXT,  -- New column to store the Google Calendar ID
+        calendar_id TEXT,  -- Column to store the Google Calendar ID
         default_reminder_time INTEGER DEFAULT 15,  -- Default reminder time in minutes before the event
-        reminder_method TEXT DEFAULT 'email'  -- Default method for sending reminders
+        reminder_method TEXT DEFAULT 'email,sms',  -- Default method for sending reminders
+        active_events_count INTEGER DEFAULT 0  -- Column to store the count of active events
     );"""
     try:
         c = conn.cursor()
@@ -148,6 +149,9 @@ def create_table(conn):
         print("Table created successfully or already exists.")
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
+
+
+
 
 def get_memgpt_user_id(conn, auth0_user_id):
     """

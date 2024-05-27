@@ -56,20 +56,7 @@ async def calendar_app_lifespan(calendar_app: FastAPI):
         await close_connection()
         print("Database disconnected for calendar service.")
 
-@calendar_app.post("/notifications")
-async def receive_notifications(request: Request):
-    notification = await request.json()
-    # Use the database to look up who the notification is for
-    user_id = notification.get("user_id")  # Example user ID from notification
-    query = "SELECT * FROM users WHERE user_id=:user_id"
-    user_data = await database.fetch_one(query, {"user_id": user_id})
-    
-    # Process the notification using the user data
-    if user_data:
-        response = await process_with_llm(user_data, notification)
-        return JSONResponse(status_code=200, content={"message": "Notification processed", "data": response})
-    else:
-        return JSONResponse(status_code=404, content={"message": "User not found"})
+
 
 async def process_with_llm(user_data, notification):
     # Implement LLM processing logic here
