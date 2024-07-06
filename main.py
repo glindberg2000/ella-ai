@@ -360,6 +360,19 @@ def guardian_agent_analysis2(message_content):
         return note
     return None
 
+# Assuming the guardian_agent_analysis function returns a string (the note) or None
+def guardian_agent_analysis3(message_content):
+
+    note = '''[Invisible Assistant Reminder: 
+    To send a visible message to the user, use the send_message function.
+    'send_message' is the ONLY action that sends a notification to the user. The user does not see anything else you do.
+    Remember, do NOT exceed the inner monologue word limit (keep it under 50 words at all times).]'''
+    logging.info(f"Appended Reminder")
+    return note
+
+
+
+
 
 @cl.on_message
 async def on_message(message: cl.Message):
@@ -387,7 +400,7 @@ async def on_message(message: cl.Message):
     # Prepare the message for MemGPT, appending the guardian's note if it exists
     message_for_memgpt = message.content
     if guardian_note:
-        logging.info(f"Appending staff note to message: {guardian_note}")
+        logging.info(f"Appending staff note to message")
         # Use an async step to visualize the staff note addition
         async with cl.Step(name="Adding Staff Note", type="note") as note_step:
             note_step.input = message.content
