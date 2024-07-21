@@ -41,11 +41,16 @@ from ella_dbo.db_manager import (
     upsert_user
 )
 
+from memgpt.memory import ChatMemory
+from memgpt import create_client
+from memgpt.agent import Agent
+from memgpt.constants import DEFAULT_HUMAN, DEFAULT_PERSONA
+
 debug = True  # Turn on debug mode to see detailed logs
 
 # Load environment variables from .env file
 load_dotenv()
-base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8283")
+BASE_URL = os.getenv("MEMGPT_API_URL", "http://localhost:8283")
 master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
 openai_api_key = os.getenv("OPENAI_API_KEY", "defaultopenaikey")
 default_preset = os.getenv('DEFAULT_PRESET', 'ella_3')
@@ -56,12 +61,27 @@ DEFAULT_AGENT_ID = os.getenv("DEFAULT_AGENT_ID", "000000")
 
 CHATBOT_NAME = "Ella AI"
 
-# from chainlit.context import init_http_context
+ #Define custom tools
+def roll_d20(self: Agent) -> str:
+    """
+    Simulate the roll of a 20-sided die (d20).
 
+    This function generates a random integer between 1 and 20, inclusive,
+    which represents the outcome of a single roll of a d20.
 
-# @app.get("/test")
-# async def test_endpoint2():
-#     return {"message": "Hello, world!"}
+    Returns:
+        str: A string describing the result of the die roll.
+
+    Example:
+        >>> roll_d20()
+        "You rolled a 15"
+    """
+    import random 
+    
+    dice_roll_outcome = random.randint(1, 20)
+    output_string = f"You rolled a {dice_roll_outcome}"
+    return output_string
+
 
 @app.get("/voice-chat")
 async def new_test_page():
@@ -70,46 +90,135 @@ async def new_test_page():
     )
 
 
-def read_file_contents(file_path: str) -> str:
+# def handle_default_agent(memgpt_user_id, user_api):
+#     logging.info(f"Checking for default agent for user {memgpt_user_id}")
+#     try:
+#         agent_info = user_api.list_agents()
+#         if not agent_info.num_agents:
+#             logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
+            
+#             # Read the contents of the persona and human templates
+#             base_dir = os.path.expanduser("~/.memgpt")
+#             human_content = read_file_contents(os.path.join(base_dir, "humans", "plato.txt"))
+#             persona_content = read_file_contents(os.path.join(base_dir, "personas", "ella_persona.txt"))
+            
+#             if human_content is None or persona_content is None:
+#                 logging.error("Failed to read human or persona files.")
+#                 raise FileNotFoundError("Required template files are missing.")
+            
+#             # Create a ChatMemory instance with the contents of the templates
+#             memory = ChatMemory(
+#                 human=human_content or DEFAULT_HUMAN,
+#                 persona=persona_content or DEFAULT_PERSONA
+#             )
+            
+#             # Create an agent with the ChatMemory instance
+#             agent_state = user_api.create_agent(
+#                 name="Default Agent",
+#                 preset=default_preset,
+#                 memory=memory,
+#                 metadata={"human": human_content, "persona": persona_content}
+#             )
+            
+#             default_agent_key = agent_state.id
+#             logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id}")
+#         else:
+#             default_agent_key = agent_info.agents[0].id
+#             logging.info(f"Multiple agents found for user {memgpt_user_id}. Selecting first agent found: {default_agent_key}")
+        
+#         return default_agent_key
+#     except Exception as e:
+#         logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
+#         raise
+
+
+
+
+
+def weather_info(self: Agent, city: str) -> str:
     """
-    Read the contents of a file given its full path.
+    A custom tool that provides simulated weather information for a given city.
+    Args:
+        city (str): The name of the city to get weather information for.
+    Returns:
+        str: A string containing simulated weather information for the specified city.
     """
+    import random
+    conditions = ["Sunny", "Partly Cloudy", "Overcast", "Rainy", "Thunderstorms", "Snowy", "Windy"]
+    temperature = random.randint(0, 35)
+    humidity = random.randint(30, 90)
+    condition = random.choice(conditions)
+    return f"Weather in {city}: {condition}, Temperature: {temperature}°C, Humidity: {humidity}%"
+
+def read_file_contents(file_path):
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
+        with open(file_path, 'r') as file:
             return file.read()
     except FileNotFoundError:
         logging.error(f"File not found: {file_path}")
+        return None
+    except Exception as e:
+        logging.error(f"Error reading file {file_path}: {str(e)}")
         return None
 
 def handle_default_agent(memgpt_user_id, user_api):
     logging.info(f"Checking for default agent for user {memgpt_user_id}")
     try:
         agent_info = user_api.list_agents()
+        
         if not agent_info.num_agents:
             logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
-
+            
             # Read the contents of the persona and human templates
             base_dir = os.path.expanduser("~/.memgpt")
             human_content = read_file_contents(os.path.join(base_dir, "humans", "plato.txt"))
             persona_content = read_file_contents(os.path.join(base_dir, "personas", "ella_persona.txt"))
-
+            
             if human_content is None or persona_content is None:
                 logging.error("Failed to read human or persona files.")
                 raise FileNotFoundError("Required template files are missing.")
-
-            # Create an agent with the contents of the templates
-            agent_response = user_api.create_agent(preset=default_preset, human=human_content, persona=persona_content)
-            default_agent_key = agent_response.id
-            logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id}")
+            
+            # Create a ChatMemory instance with the contents of the templates
+            memory = ChatMemory(
+                human=human_content or DEFAULT_HUMAN,
+                persona=persona_content or DEFAULT_PERSONA
+            )
+            
+            # Create the custom weather tool first
+            try:
+                tool = user_api.create_tool(weather_info, name="weather_info", update=False)
+                logging.info(f"Created custom weather tool: {tool.name}")
+            except Exception as e:
+                logging.error(f"Failed to create custom weather tool: {str(e)}")
+                raise
+            
+            # Now create the agent with the tool
+            agent_state = user_api.create_agent(
+                name="Default Agent",
+                preset=default_preset,
+                memory=memory,
+                metadata={"human": human_content, "persona": persona_content},
+                tools=[tool.name]  # Add the tool to the agent at creation time
+            )
+            default_agent_key = agent_state.id
+            logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id} with weather_info tool")
+            
+            # Verify tool creation
+            all_tools = user_api.list_tools()
+            if any(t.name == "weather_info" for t in all_tools):
+                logging.info(f"Successfully verified weather tool creation")
+            else:
+                logging.warning(f"Weather tool creation verification failed")
+            
         else:
             default_agent_key = agent_info.agents[0].id
-            logging.info(f"Multiple agents found for user {memgpt_user_id}. Selecting first agent found: {default_agent_key}")
+            logging.info(f"Existing agent found for user {memgpt_user_id}. Using agent: {default_agent_key}")
+        
         return default_agent_key
+    
     except Exception as e:
         logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
         raise
-
-
 
 def get_phone_from_email(email):
     # Convert the email to a format suitable for environment variable names
@@ -218,7 +327,7 @@ async def oauth_callback(
 
     # MemGPT and VAPI Assistant Setup
     if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id:
-        admin_api = AdminRESTClient(base_url, master_api_key)
+        admin_api = AdminRESTClient(BASE_URL, master_api_key)
 
         if not memgpt_user_id:
             # Create MemGPT user
@@ -234,7 +343,7 @@ async def oauth_callback(
 
         if not default_agent_key:
             # Check for default agent
-            user_api = ExtendedRESTClient(base_url, memgpt_user_api_key, debug)
+            user_api = ExtendedRESTClient(BASE_URL, memgpt_user_api_key, debug)
             default_agent_key = handle_default_agent(memgpt_user_id, user_api)
             logging.info(f"Default agent key: {default_agent_key}")
 
@@ -258,8 +367,8 @@ async def oauth_callback(
         logging.info(f"Retrieved phone number from environment variable: {env_phone}")
         phone = env_phone if env_phone else None
 
-    # Update the user data in the memgpt core memory
-    update_agent_memory(base_url, memgpt_user_api_key, default_agent_key, memgpt_user_id)
+    # Update the user data in the memgpt core memory to include the user_id for handling calanedars etc. 
+    # update_agent_memory(BASE_URL, memgpt_user_api_key, default_agent_key, memgpt_user_id)
 
     try:
         # Log the data before the upsert operation
@@ -337,7 +446,9 @@ async def on_chat_start():
     display_message = f"Successfuly loaded roles: {roles}"
     custom_message = f"Hello {user_name}, {display_message}, Phone number on file: {phone}, Email: {user_email}"
 
-    await cl.Message(content=custom_message, author=CHATBOT_NAME).send()
+    logging.info({custom_message})
+
+    #await cl.Message(content=custom_message, author=CHATBOT_NAME).send()
 
 
 # Assuming the guardian_agent_analysis function returns a string (the note) or None,
@@ -367,88 +478,103 @@ def guardian_agent_analysis3(message_content):
     To send a visible message to the user, use the send_message function.
     'send_message' is the ONLY action that sends a notification to the user. The user does not see anything else you do.
     Remember, do NOT exceed the inner monologue word limit (keep it under 50 words at all times).]'''
-    logging.info(f"Appended Reminder")
+    logging.info(f"Appended Function Reminder")
     return note
 
 
 
+DEBUG = True  # Set this to False in production
 
+@cl.set_starters
+async def set_starters():
+    return [
+        cl.Starter(
+            label="Check Your Calendar",
+            message="Can you show me my schedule for today? I need to see my upcoming meetings, appointments, and tasks.",
+            icon="/public/calendar.svg",
+        ),
+        cl.Starter(
+            label="Daily Highlights",
+            message="Can you provide me with today's highlights? I'd like to know the main events, important to-dos, and any key updates.",
+            icon="/public/highlights.svg",
+        ),
+        cl.Starter(
+            label="Mental Coaching",
+            message="I need some mental coaching. Can you give me some tips or exercises to help improve my focus and reduce stress?",
+            icon="/public/mental_coach.svg",
+        ),
+        cl.Starter(
+            label="Store Important Information",
+            message="I'd like to store some important information. Can you help me save details about words, people, or events that I should remember?",
+            icon="/public/store_info.svg",
+        ),
+    ]
 
 @cl.on_message
 async def on_message(message: cl.Message):
-
-    # Attempt to access user details from the cl.User object
     try:
-        app_user = cl.user_session.get("user")  #retrieval of user session with chainlit context
+        # Retrieve user data from session
+        app_user = cl.user_session.get("user")
         agent_id = app_user.metadata.get("default_agent_key", DEFAULT_AGENT_ID)
         user_api_key = app_user.metadata.get("memgpt_user_api_key", DEFAULT_API_KEY)
         logging.info(f"Retrieved user data from session: {app_user.metadata}")
+        
+        user_api = ExtendedRESTClient(BASE_URL, user_api_key, DEBUG)
+        
+        # Analyze message with guardian agent
+        guardian_note = guardian_agent_analysis3(message.content)
+        message_for_memgpt = message.content
+
+        # Add guardian note if it exists
+        if guardian_note:
+            guardian_step = cl.Step(name="Adding Staff Note", type="note")
+            guardian_step.input = message.content
+            guardian_step.output = guardian_note
+            await guardian_step.send()
+            message_for_memgpt += f"\n\n{guardian_note}"
+
+        # Create the main step for the chatbot response
+        root_step = cl.Step(name=CHATBOT_NAME, type="llm")
+        root_step.input = message_for_memgpt
+        await root_step.send()
+
+        assistant_message = ""
+
+        # Stream the response from the MemGPT agent
+        async for part in user_api.send_message_to_agent_streamed(agent_id, message_for_memgpt):
+            if part.startswith("data: "):
+                data_content = part[6:]
+                part = json.loads(data_content)
+
+            if "internal_monologue" in part:
+                monologue_step = cl.Step(name="Internal Monologue", type="thought")
+                monologue_step.output = part["internal_monologue"]
+                await monologue_step.send()
+
+            elif "function_call" in part:
+                func_call_step = cl.Step(name="Function Call", type="call")
+                func_call_step.output = str(part["function_call"])
+                await func_call_step.send()
+
+            elif "function_return" in part:
+                func_return = f"Function Return: {part.get('function_return', 'No return value')}, Status: {part.get('status', 'No status')}"
+                func_return_step = cl.Step(name="Function Return", type="return")
+                func_return_step.output = func_return
+                await func_return_step.send()
+
+            elif "assistant_message" in part:
+                assistant_message += part["assistant_message"]
+                await root_step.stream_token(part["assistant_message"])
+
+        root_step.output = assistant_message
+        await root_step.update()
+
+        # Send the final message
+        await cl.Message(content=assistant_message, author=CHATBOT_NAME).send()
+
     except Exception as e:
-        logging.error(f"Failed to retrieve user data from session: {e}")
+        logging.error(f"An error occurred: {e}")
         await cl.Message(
             content="An error occurred while processing your request. Please try again.",
             author=CHATBOT_NAME,
         ).send()
-        return
-
-    user_api = ExtendedRESTClient(base_url, user_api_key, debug)
-
-    logging.info(f"Received message from user {message.author} with content: {message.content}")
-    # Call the guardian agent function to analyze the message and potentially add notes
-    guardian_note = guardian_agent_analysis2(message.content)
-
-    # Prepare the message for MemGPT, appending the guardian's note if it exists
-    message_for_memgpt = message.content
-    if guardian_note:
-        logging.info(f"Appending staff note to message")
-        # Use an async step to visualize the staff note addition
-        async with cl.Step(name="Adding Staff Note", type="note") as note_step:
-            note_step.input = message.content
-            note_step.output = guardian_note
-            logging.info("Finished appending staff note addition.")  # Debugging statement
-
-        # Append the note to the user's message, ensuring a clear separation
-        message_for_memgpt += f"\n\n{guardian_note}"
-    else:
-        logging.info("No staff note added.")  # Debugging statement
-
-    # Send the message to the MemGPT agent
-    async with cl.Step(name=CHATBOT_NAME, type="llm", root=True) as root_step:
-        root_step.input = message.content
-        assistant_message = ""
-        # Adjusted to pass the modified message content, now including the staff note
-        async for part in user_api.send_message_to_agent_streamed(
-            agent_id, message_for_memgpt
-        ):
-            if part.startswith("data: "):
-                data_content = part[6:]  # Extract JSON content
-                part = json.loads(data_content)  # Now part is a dictionary
-                if "internal_monologue" in part:
-                    monologue = part["internal_monologue"]
-                    async with cl.Step(
-                        name="Internal Monologue", type="thought"
-                    ) as monologue_step:
-                        monologue_step.output = monologue
-                elif "function_call" in part:
-                    func_call = part["function_call"]
-                    async with cl.Step(
-                        name="Function Call", type="call"
-                    ) as func_call_step:
-                        func_call_step.output = func_call
-                elif "function_return" in part:
-                    func_return = f"Function Return: {part.get('function_return', 'No return value')}, Status: {part.get('status', 'No status')}"
-                    async with cl.Step(
-                        name="Function Return", type="return"
-                    ) as func_return_step:
-                        func_return_step.output = func_return
-                elif "assistant_message" in part:
-                    assistant_message += part["assistant_message"]
-                    async with cl.Step(
-                        name="Assistant Response", type="output"
-                    ) as assistant_step:
-                        assistant_step.output = assistant_message
-
-            root_step.output = assistant_message
-
-
-

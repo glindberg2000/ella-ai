@@ -96,9 +96,25 @@ async def read_user_by_email(email: str):
 async def poll_gmail_notifications():
     creds = None
     if os.path.exists(GMAIL_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
+            logging.info("Successfully loaded credentials from file.")
+        except Exception as e:
+            logging.error(f"Error loading credentials: {e}")
+            return
+
+    if not creds:
+        logging.error("Gmail Service: missing credentials. Ensure you have a valid token.")
+        return
+    if not creds.valid:
+        logging.error("Gmail Service: Invalid credentials. Ensure you have a valid token.")
+        return
 
     service = build("gmail", "v1", credentials=creds)
+    # Log the authenticated user's email address
+    user_profile = service.users().getProfile(userId="me").execute()
+    email_address = user_profile.get("emailAddress")
+    logging.info(f"Authenticated Gmail account: {email_address}")
 
     while True:
         try:
@@ -136,7 +152,7 @@ async def poll_gmail_notifications():
         except Exception as e:
             logger.error(f"Error during Gmail polling: {e}")
             await asyncio.sleep(60)
-
+            
 async def route_reply_to_memgpt_api(message, subject, message_id, memgpt_user_api_key, agent_key):
     url = f"{base_url}/api/agents/{agent_key}/messages"
     headers = {

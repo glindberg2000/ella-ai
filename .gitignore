@@ -63,8 +63,18 @@ dist-ssr
 *.bak
 tree.txt
 
+chainlit-cookbook
+.persist/pgdata/
+
+
 openapi_assistants.json
 openapi_memgpt.json
 
 token.json
 credentials.json
+gcal_token.json
+gmail_token.json
+google_api_credentials.json
+
+!package.json
+!package-lock.json
