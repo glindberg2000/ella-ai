@@ -7,6 +7,21 @@ logger = logging.getLogger(__name__)
 
 import json
 import os
+import sys
+
+# Add the project root to sys.path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+# Import and run setup_env
+from setup_env import setup_env
+setup_env()
+
+# from config import DB_PATH, MEMGPT_TOOLS_PATH
+# from ella_memgpt.tools.custom_tools import CUSTOM_TOOLS
+
+
 from typing import Any, AsyncGenerator, Dict, Optional
 import jwt
 # Your secret key for signing the JWT - keep it secure and do not expose it
@@ -33,6 +48,7 @@ from dotenv import load_dotenv
 from ella_memgpt.extendedRESTclient import ExtendedRESTClient
 from memgpt.client.admin import Admin as AdminRESTClient
 from ella_memgpt.memgpt_admin import create_memgpt_user_and_api_key, manage_agents
+
 from ella_vapi.vapi_client import VAPIClient
 from ella_dbo.db_manager import (
     create_connection,
@@ -41,10 +57,10 @@ from ella_dbo.db_manager import (
     upsert_user
 )
 
-from memgpt.memory import ChatMemory
-from memgpt import create_client
-from memgpt.agent import Agent
-from memgpt.constants import DEFAULT_HUMAN, DEFAULT_PERSONA
+# from memgpt.memory import ChatMemory
+# from memgpt import create_client
+# from memgpt.agent import Agent
+from agent_creation import handle_default_agent
 
 debug = True  # Turn on debug mode to see detailed logs
 
@@ -53,7 +69,7 @@ load_dotenv()
 BASE_URL = os.getenv("MEMGPT_API_URL", "http://localhost:8283")
 master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
 openai_api_key = os.getenv("OPENAI_API_KEY", "defaultopenaikey")
-default_preset = os.getenv('DEFAULT_PRESET', 'ella_3')
+#default_preset = os.getenv('DEFAULT_PRESET', 'ella_3')
 
 # Define default values
 DEFAULT_API_KEY = os.getenv("DEFAULT_API_KEY", "000000")
@@ -61,26 +77,6 @@ DEFAULT_AGENT_ID = os.getenv("DEFAULT_AGENT_ID", "000000")
 
 CHATBOT_NAME = "Ella AI"
 
- #Define custom tools
-def roll_d20(self: Agent) -> str:
-    """
-    Simulate the roll of a 20-sided die (d20).
-
-    This function generates a random integer between 1 and 20, inclusive,
-    which represents the outcome of a single roll of a d20.
-
-    Returns:
-        str: A string describing the result of the die roll.
-
-    Example:
-        >>> roll_d20()
-        "You rolled a 15"
-    """
-    import random 
-    
-    dice_roll_outcome = random.randint(1, 20)
-    output_string = f"You rolled a {dice_roll_outcome}"
-    return output_string
 
 
 @app.get("/voice-chat")
@@ -90,135 +86,6 @@ async def new_test_page():
     )
 
 
-# def handle_default_agent(memgpt_user_id, user_api):
-#     logging.info(f"Checking for default agent for user {memgpt_user_id}")
-#     try:
-#         agent_info = user_api.list_agents()
-#         if not agent_info.num_agents:
-#             logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
-            
-#             # Read the contents of the persona and human templates
-#             base_dir = os.path.expanduser("~/.memgpt")
-#             human_content = read_file_contents(os.path.join(base_dir, "humans", "plato.txt"))
-#             persona_content = read_file_contents(os.path.join(base_dir, "personas", "ella_persona.txt"))
-            
-#             if human_content is None or persona_content is None:
-#                 logging.error("Failed to read human or persona files.")
-#                 raise FileNotFoundError("Required template files are missing.")
-            
-#             # Create a ChatMemory instance with the contents of the templates
-#             memory = ChatMemory(
-#                 human=human_content or DEFAULT_HUMAN,
-#                 persona=persona_content or DEFAULT_PERSONA
-#             )
-            
-#             # Create an agent with the ChatMemory instance
-#             agent_state = user_api.create_agent(
-#                 name="Default Agent",
-#                 preset=default_preset,
-#                 memory=memory,
-#                 metadata={"human": human_content, "persona": persona_content}
-#             )
-            
-#             default_agent_key = agent_state.id
-#             logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id}")
-#         else:
-#             default_agent_key = agent_info.agents[0].id
-#             logging.info(f"Multiple agents found for user {memgpt_user_id}. Selecting first agent found: {default_agent_key}")
-        
-#         return default_agent_key
-#     except Exception as e:
-#         logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
-#         raise
-
-
-
-
-
-def weather_info(self: Agent, city: str) -> str:
-    """
-    A custom tool that provides simulated weather information for a given city.
-    Args:
-        city (str): The name of the city to get weather information for.
-    Returns:
-        str: A string containing simulated weather information for the specified city.
-    """
-    import random
-    conditions = ["Sunny", "Partly Cloudy", "Overcast", "Rainy", "Thunderstorms", "Snowy", "Windy"]
-    temperature = random.randint(0, 35)
-    humidity = random.randint(30, 90)
-    condition = random.choice(conditions)
-    return f"Weather in {city}: {condition}, Temperature: {temperature}°C, Humidity: {humidity}%"
-
-def read_file_contents(file_path):
-    try:
-        with open(file_path, 'r') as file:
-            return file.read()
-    except FileNotFoundError:
-        logging.error(f"File not found: {file_path}")
-        return None
-    except Exception as e:
-        logging.error(f"Error reading file {file_path}: {str(e)}")
-        return None
-
-def handle_default_agent(memgpt_user_id, user_api):
-    logging.info(f"Checking for default agent for user {memgpt_user_id}")
-    try:
-        agent_info = user_api.list_agents()
-        
-        if not agent_info.num_agents:
-            logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
-            
-            # Read the contents of the persona and human templates
-            base_dir = os.path.expanduser("~/.memgpt")
-            human_content = read_file_contents(os.path.join(base_dir, "humans", "plato.txt"))
-            persona_content = read_file_contents(os.path.join(base_dir, "personas", "ella_persona.txt"))
-            
-            if human_content is None or persona_content is None:
-                logging.error("Failed to read human or persona files.")
-                raise FileNotFoundError("Required template files are missing.")
-            
-            # Create a ChatMemory instance with the contents of the templates
-            memory = ChatMemory(
-                human=human_content or DEFAULT_HUMAN,
-                persona=persona_content or DEFAULT_PERSONA
-            )
-            
-            # Create the custom weather tool first
-            try:
-                tool = user_api.create_tool(weather_info, name="weather_info", update=False)
-                logging.info(f"Created custom weather tool: {tool.name}")
-            except Exception as e:
-                logging.error(f"Failed to create custom weather tool: {str(e)}")
-                raise
-            
-            # Now create the agent with the tool
-            agent_state = user_api.create_agent(
-                name="Default Agent",
-                preset=default_preset,
-                memory=memory,
-                metadata={"human": human_content, "persona": persona_content},
-                tools=[tool.name]  # Add the tool to the agent at creation time
-            )
-            default_agent_key = agent_state.id
-            logging.info(f"Created default agent {default_agent_key} for user {memgpt_user_id} with weather_info tool")
-            
-            # Verify tool creation
-            all_tools = user_api.list_tools()
-            if any(t.name == "weather_info" for t in all_tools):
-                logging.info(f"Successfully verified weather tool creation")
-            else:
-                logging.warning(f"Weather tool creation verification failed")
-            
-        else:
-            default_agent_key = agent_info.agents[0].id
-            logging.info(f"Existing agent found for user {memgpt_user_id}. Using agent: {default_agent_key}")
-        
-        return default_agent_key
-    
-    except Exception as e:
-        logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
-        raise
 
 def get_phone_from_email(email):
     # Convert the email to a format suitable for environment variable names
@@ -368,7 +235,7 @@ async def oauth_callback(
         phone = env_phone if env_phone else None
 
     # Update the user data in the memgpt core memory to include the user_id for handling calanedars etc. 
-    # update_agent_memory(BASE_URL, memgpt_user_api_key, default_agent_key, memgpt_user_id)
+    update_agent_memory(BASE_URL, memgpt_user_api_key, default_agent_key, memgpt_user_id)
 
     try:
         # Log the data before the upsert operation

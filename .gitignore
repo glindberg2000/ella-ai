@@ -2,7 +2,7 @@ build
 dist
 
 *.egg-info
-
+*.egg-info/
 .env
 
 *.files
@@ -17,7 +17,7 @@ venv
 .chainlit
 !cypress/e2e/**/*/.chainlit/*
 ella/
-
+credentials/
 cypress/screenshots
 cypress/videos
 cypress/downloads

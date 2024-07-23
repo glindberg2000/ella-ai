@@ -1,42 +1,58 @@
+# setup.py
+
 import os
-import shutil
-import logging
+from setuptools import setup, find_packages
 
-def copy_files(source_dir: str, target_dir: str):
-    """
-    Copy files from source_dir to target_dir, logging whether files are new or being overwritten.
-    """
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir, exist_ok=True)
+def read(fname):
+    return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
-    for item in os.listdir(source_dir):
-        source_item = os.path.join(source_dir, item)
-        target_item = os.path.join(target_dir, item)
+# Read requirements from requirements.txt
+with open('requirements.txt') as f:
+    required = f.read().splitlines()
 
-        if os.path.isfile(source_item):
-            if os.path.exists(target_item):
-                logging.info(f"Overwriting existing file: {target_item}")
-            else:
-                logging.info(f"Creating new file: {target_item}")
-            shutil.copy2(source_item, target_item)
-        elif os.path.isdir(source_item):
-            copy_files(source_item, target_item)
+# Function to process requirements
+def process_requirements(req_list):
+    processed = []
+    for req in req_list:
+        if req.startswith('protobuf'):
+            # Use a more flexible version for protobuf
+            processed.append('protobuf>=3.19.5,<6.0.0.dev0')
+        elif '==' in req:
+            # Replace fixed versions with minimum versions
+            package, version = req.split('==')
+            processed.append(f'{package}>={version}')
+        else:
+            processed.append(req)
+    return processed
 
-def setup_memgpt_templates():
-    """
-    Copy templates from 'ella_memgpt/templates' to '~/.memgpt', including humans, presets, personas, and now functions.
-    """
-    base_source_dir = os.path.join(os.getcwd(), "ella_memgpt", "templates")
-    base_target_dir = os.path.join(os.path.expanduser("~"), ".memgpt")
-
-    # Include 'functions' in the list of directories to copy
-    for folder_name in ["humans", "presets", "personas", "functions"]:
-        source_dir = os.path.join(base_source_dir, folder_name)
-        target_dir = os.path.join(base_target_dir, folder_name)
-
-        logging.info(f"Copying {folder_name} from {source_dir} to {target_dir}")
-        copy_files(source_dir, target_dir)
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    setup_memgpt_templates()
+setup(
+    name="ella-ai",
+    version="0.1.0",
+    author="Greg Lindberg",
+    author_email="greglindberg@gmail.com",
+    description="AI Assistant",
+    long_description=read('README.md'),
+    long_description_content_type="text/markdown",
+    url="https://github.com/glindberg2000/ella-ai",
+    packages=find_packages(),
+    install_requires=process_requirements(required),
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+    ],
+    python_requires='>=3.7',
+    # entry_points={
+    #     'console_scripts': [
+    #         'ella-ai=ella_ai.cli:main',
+    #     ],
+    # },
+    include_package_data=True,
+    package_data={
+        'ella_ai': ['memgpt_tools/credentials/*.json'],
+    },
+)

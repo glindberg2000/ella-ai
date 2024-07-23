@@ -38,3 +38,6 @@ This log documents the development progress, including achievements, issues enco
 - Enhance the security and privacy of user data.
 - Prepare for potential team expansion by documenting processes and simplifying onboarding.
 
+## Moving to new MGPT function config
+- new google utils, config, env_setup, folder structure
+- new function creation scripts
