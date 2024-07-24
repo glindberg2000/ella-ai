@@ -61,12 +61,18 @@ class GoogleAuthBase:
                     self.creds = flow.run_local_server(port=0)
                 with open(self.token_path, "w") as token:
                     token.write(self.creds.to_json())
+            self.auth_email = self._get_auth_email()
         except Exception as e:
             logger.error(f"Error during authentication: {str(e)}", exc_info=True)
 
     def _get_auth_email(self) -> Optional[str]:
-        # This method should be implemented by derived classes if needed
-        return None
+        try:
+            service = build("gmail", "v1", credentials=self.creds)
+            profile = service.users().getProfile(userId='me').execute()
+            return profile['emailAddress']
+        except Exception as e:
+            logger.error(f"Error retrieving authenticated email: {str(e)}", exc_info=True)
+            return None
 
 class GoogleCalendarUtils(GoogleAuthBase):
     def __init__(self, token_path: str, credentials_path: str):
@@ -202,23 +208,11 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error deleting event: {str(e)}", exc_info=True)
             return False
 
+
 class GoogleEmailUtils(GoogleAuthBase):
     def __init__(self, token_path: str, credentials_path: str):
-        super().__init__(token_path, credentials_path, [
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/gmail.send",
-            "https://www.googleapis.com/auth/gmail.readonly"
-        ])
+        super().__init__(token_path, credentials_path, ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.modify"])
         self.service = build("gmail", "v1", credentials=self.creds)
-        self.auth_email = self._get_auth_email()
-
-    def _get_auth_email(self) -> Optional[str]:
-        try:
-            profile = self.service.users().getProfile(userId='me').execute()
-            return profile['emailAddress']
-        except Exception as e:
-            logger.error(f"Error retrieving authenticated email: {str(e)}", exc_info=True)
-            return None
 
     def send_email(self, recipient_email: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
         try:

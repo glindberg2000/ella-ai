@@ -9,10 +9,22 @@ load_dotenv()
 CREDENTIALS_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'google_api_credentials.json')
 GMAIL_TOKEN_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'gmail_token.json')
 
+import os
+from google_auth_oauthlib.flow import InstalledAppFlow
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Get paths from environment variables
+CREDENTIALS_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'google_api_credentials.json')
+GMAIL_TOKEN_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'gmail_token.json')
+
 # Scopes required for Gmail API
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send"
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.readonly"
 ]
 
 # Initiate the OAuth flow to obtain new credentials for Gmail
@@ -29,7 +41,7 @@ def obtain_gmail_credentials():
     # Save the credentials to the specified path
     with open(GMAIL_TOKEN_PATH, "w") as token_file:
         token_file.write(creds.to_json())
-    
+
     print(f"New credentials saved to {GMAIL_TOKEN_PATH}")
 
 if __name__ == "__main__":
