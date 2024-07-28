@@ -1,5 +1,3 @@
-# google_utils.py
-
 import os
 import sys
 import logging
@@ -8,9 +6,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union
 import datetime
-import base64
 
 # Add the project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -100,33 +97,13 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error in get_or_create_user_calendar: {str(e)}", exc_info=True)
             return None
 
-    def create_calendar_event(self, calendar_id: str, title: str, start: str, end: str, description: Optional[str] = None) -> Optional[str]:
+    def create_calendar_event(self, calendar_id: str, event_data: dict) -> dict:
         try:
-            event = {
-                "summary": title,
-                "start": {"dateTime": start, "timeZone": "America/Los_Angeles"},
-                "end": {"dateTime": end, "timeZone": "America/Los_Angeles"},
-                "description": description
-            }
-            created_event = self.service.events().insert(calendarId=calendar_id, body=event).execute()
-            return created_event.get('htmlLink')
-        except Exception as e:
+            event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
+            return {"success": True, "id": event['id'], "htmlLink": event.get('htmlLink')}
+        except HttpError as e:
             logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
-            return None
-
-    def set_calendar_permissions(self, calendar_id: str, user_email: str):
-        try:
-            rule = {
-                'scope': {
-                    'type': 'user',
-                    'value': user_email
-                },
-                'role': 'writer'
-            }
-            self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
-            logger.info(f"Set calendar permissions for {user_email} on calendar {calendar_id}")
-        except Exception as e:
-            logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
+            return {"success": False, "message": f"Error creating event: {str(e)}"}
 
     def fetch_upcoming_events(self, user_id: str, max_results: int = 10, time_min: Optional[str] = None) -> List[Dict]:
         try:
@@ -147,60 +124,68 @@ class GoogleCalendarUtils(GoogleAuthBase):
             ).execute()
 
             events = events_result.get('items', [])
-
-            formatted_events = []
-            for event in events:
-                formatted_events.append({
-                    'id': event['id'],
-                    'summary': event.get('summary', 'No Title'),
-                    'start': event['start'].get('dateTime', event['start'].get('date')),
-                    'end': event['end'].get('dateTime', event['end'].get('date')),
-                    'description': event.get('description', 'No description')
-                })
-
-            return formatted_events
+            return events
         except Exception as e:
             logger.error(f"Error fetching events: {str(e)}", exc_info=True)
             return []
 
-    def update_calendar_event(self, user_id: str, event_id: str, title: Optional[str] = None, 
-                              start: Optional[str] = None, end: Optional[str] = None, 
-                              description: Optional[str] = None) -> Optional[Dict]:
+    def delete_calendar_event(self, user_id: str, event_id: str, delete_series: bool = False) -> dict:
         try:
             calendar_id = self.get_or_create_user_calendar(user_id)
             if not calendar_id:
-                logger.error(f"Unable to get calendar for user_id: {user_id}")
-                return None
+                return {"success": False, "message": "Unable to get or create user calendar"}
+
+            try:
+                if delete_series:
+                    event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+                    if 'recurringEventId' in event:
+                        series_id = event['recurringEventId']
+                        self.service.events().delete(calendarId=calendar_id, eventId=series_id).execute()
+                        return {"success": True, "message": f"Event series deleted successfully. ID: {series_id}"}
+                self.service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+                return {"success": True, "message": "Event deleted successfully"}
+            except HttpError as error:
+                if error.resp.status == 404:
+                    return {"success": False, "message": f"Event not found: {event_id}"}
+                else:
+                    return {"success": False, "message": f"Error deleting event: {str(error)}"}
+        except Exception as e:
+            logger.error(f"Error in delete_calendar_event: {str(e)}", exc_info=True)
+            return {"success": False, "message": f"Error deleting event: {str(e)}"}
+
+    def set_calendar_permissions(self, calendar_id: str, user_email: str):
+        try:
+            rule = {
+                'scope': {
+                    'type': 'user',
+                    'value': user_email
+                },
+                'role': 'writer'
+            }
+            self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
+            logger.info(f"Set calendar permissions for {user_email} on calendar {calendar_id}")
+        except Exception as e:
+            logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
+
+    def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False) -> dict:
+        try:
+            calendar_id = self.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return {"success": False, "message": "Unable to get or create user calendar"}
 
             event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
 
-            if title:
-                event['summary'] = title
-            if start:
-                event['start']['dateTime'] = start
-            if end:
-                event['end']['dateTime'] = end
-            if description:
-                event['description'] = description
+            if update_series and 'recurringEventId' in event:
+                series_id = event['recurringEventId']
+                updated_event = self.service.events().patch(calendarId=calendar_id, eventId=series_id, body=event_data).execute()
+                return {"success": True, "message": f"Event series updated successfully. ID: {series_id}", "event": updated_event}
+            else:
+                updated_event = self.service.events().patch(calendarId=calendar_id, eventId=event_id, body=event_data).execute()
+                return {"success": True, "message": "Event updated successfully", "event": updated_event}
+        except HttpError as e:
+            logger.error(f"Error in update_calendar_event: {str(e)}", exc_info=True)
+            return {"success": False, "message": f"Error updating event: {str(e)}"}
 
-            updated_event = self.service.events().update(calendarId=calendar_id, eventId=event_id, body=event).execute()
-            return updated_event
-        except Exception as e:
-            logger.error(f"Error updating event: {str(e)}", exc_info=True)
-            return None
-
-    def delete_calendar_event(self, user_id: str, event_id: str) -> bool:
-        try:
-            calendar_id = self.get_or_create_user_calendar(user_id)
-            if not calendar_id:
-                logger.error(f"Unable to get calendar for user_id: {user_id}")
-                return False
-
-            self.service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting event: {str(e)}", exc_info=True)
-            return False
 
 class GoogleEmailUtils(GoogleAuthBase):
     def __init__(self, token_path: str, credentials_path: str):

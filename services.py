@@ -1,11 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from contextlib import asynccontextmanager
 import asyncio
 # Import other existing apps
 from vapi_service import vapi_app_lifespan, vapi_app
 from twilio_service import twilio_app_lifespan, twilio_app
-from gmail_service import gmail_app_lifespan, gmail_app
-# from reminder_service import run_reminder_service
+from gmail_service import gmail_app_lifespan, gmail_app, poll_gmail_notifications
 
 app = FastAPI()
 
@@ -15,22 +14,27 @@ async def main_lifespan(app: FastAPI):
     Lifespan context manager for the main app.
     """
     print("Main app startup tasks")
-    # reminder_task = asyncio.create_task(run_reminder_service())
+    background_tasks = BackgroundTasks()
+    
     async with vapi_app_lifespan(vapi_app):
         print("VAPI app lifespan context managed by main app")
-    async with twilio_app_lifespan(twilio_app):
-        print("Twilio app lifespan context managed by main app")
-    async with gmail_app_lifespan(gmail_app):
-        print("Gmail app lifespan context managed by main app")
-    yield
+        async with twilio_app_lifespan(twilio_app):
+            print("Twilio app lifespan context managed by main app")
+            async with gmail_app_lifespan(gmail_app) as gmail_context:
+                print("Gmail app lifespan context managed by main app")
+                gmail_task = asyncio.create_task(poll_gmail_notifications())
+                yield {"gmail_task": gmail_task}
+    
     print("Main app cleanup tasks")
-    # reminder_task.cancel()
-    # try:
-    #     await reminder_task
-    # except asyncio.CancelledError:
-    #     pass
+    if 'gmail_task' in locals():
+        gmail_task.cancel()
+        try:
+            await gmail_task
+        except asyncio.CancelledError:
+            pass
 
 app.router.lifespan_context = main_lifespan
+
 
 # Mount the services
 app.mount("/vapi", vapi_app)
