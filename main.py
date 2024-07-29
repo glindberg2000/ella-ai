@@ -211,8 +211,14 @@ async def oauth_callback(
         if not default_agent_key:
             # Check for default agent
             user_api = ExtendedRESTClient(BASE_URL, memgpt_user_api_key, debug)
-            default_agent_key = handle_default_agent(memgpt_user_id, user_api)
+            default_agent_key, agent_state = handle_default_agent(memgpt_user_id, user_api)
             logging.info(f"Default agent key: {default_agent_key}")
+            
+            # Print out the LLM config
+            llm_config = agent_state.llm_config
+            logging.info(f"LLM Config for agent {default_agent_key}:")
+            logging.info(json.dumps(llm_config.__dict__, indent=2))
+
 
         if not vapi_assistant_id:
             # Create VAPI Assistant using the VAPIClient and a preset template
@@ -387,6 +393,12 @@ async def on_message(message: cl.Message):
         logging.info(f"Retrieved user data from session: {app_user.metadata}")
         
         user_api = ExtendedRESTClient(BASE_URL, user_api_key, DEBUG)
+        agent_state = user_api.get_agent(agent_id=agent_id)
+
+        # Print out the LLM config
+        llm_config = agent_state.llm_config
+        logging.info(f"LLM Config for agent {agent_id} on login:")
+        logging.info(json.dumps(llm_config.__dict__, indent=2))
         
         # Analyze message with guardian agent
         guardian_note = guardian_agent_analysis3(message.content)

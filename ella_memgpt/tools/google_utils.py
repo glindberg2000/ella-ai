@@ -105,12 +105,42 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
 
-    def fetch_upcoming_events(self, user_id: str, max_results: int = 10, time_min: Optional[str] = None) -> List[Dict]:
+    # def fetch_upcoming_events(self, user_id: str, max_results: int = 10, time_min: Optional[str] = None) -> List[Dict]:
+    #     try:
+    #         calendar_id = self.get_or_create_user_calendar(user_id)
+    #         if not calendar_id:
+    #             logger.error(f"Unable to get calendar for user_id: {user_id}")
+    #             return []
+
+    #         if not time_min:
+    #             time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+
+    #         events_result = self.service.events().list(
+    #             calendarId=calendar_id,
+    #             timeMin=time_min,
+    #             maxResults=max_results,
+    #             singleEvents=True,
+    #             orderBy='startTime'
+    #         ).execute()
+
+    #         events = events_result.get('items', [])
+    #         return events
+    #     except Exception as e:
+    #         logger.error(f"Error fetching events: {str(e)}", exc_info=True)
+    #         return []
+
+    def fetch_upcoming_events(
+        self, 
+        user_id: str, 
+        max_results: int = 10, 
+        time_min: Optional[str] = None,
+        page_token: Optional[str] = None
+    ) -> dict:
         try:
             calendar_id = self.get_or_create_user_calendar(user_id)
             if not calendar_id:
                 logger.error(f"Unable to get calendar for user_id: {user_id}")
-                return []
+                return {"items": [], "nextPageToken": None, "prevPageToken": None}
 
             if not time_min:
                 time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
@@ -120,14 +150,19 @@ class GoogleCalendarUtils(GoogleAuthBase):
                 timeMin=time_min,
                 maxResults=max_results,
                 singleEvents=True,
-                orderBy='startTime'
+                orderBy='startTime',
+                pageToken=page_token
             ).execute()
 
             events = events_result.get('items', [])
-            return events
+            next_page_token = events_result.get('nextPageToken')
+            prev_page_token = events_result.get('prevPageToken')
+            
+            return {"items": events, "nextPageToken": next_page_token, "prevPageToken": prev_page_token}
         except Exception as e:
             logger.error(f"Error fetching events: {str(e)}", exc_info=True)
-            return []
+            return {"items": [], "nextPageToken": None, "prevPageToken": None}
+
 
     def delete_calendar_event(self, user_id: str, event_id: str, delete_series: bool = False) -> dict:
         try:

@@ -75,11 +75,12 @@ def handle_default_agent(memgpt_user_id, user_api):
             else:
                 logging.warning(f"Custom tool creation verification failed")
             
+            return default_agent_key, agent_state
         else:
             default_agent_key = agent_info.agents[0].id
+            agent_state = user_api.get_agent(agent_id=default_agent_key)
             logging.info(f"Existing agent found for user {memgpt_user_id}. Using agent: {default_agent_key}")
-        
-        return default_agent_key
+            return default_agent_key, agent_state      
     
     except Exception as e:
         logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
