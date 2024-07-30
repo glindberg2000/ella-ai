@@ -10,108 +10,7 @@ from dotenv import load_dotenv
 from enum import Enum
 
 # Global imports for testing purposes only. Comment out the internal import versions while testing.
-#from google_utils import GoogleCalendarUtils, UserDataManager, GoogleEmailUtils
-
-# def schedule_event(
-#     self: Agent,
-#     user_id: str,
-#     title: str,
-#     start: str,
-#     end: str,
-#     description: Optional[str] = None,
-#     location: Optional[str] = None,
-#     reminders: Optional[str] = None,
-#     recurrence: Optional[str] = None
-# ) -> str:
-#     """
-#     Schedule an event in the user's Google Calendar with location, reminders, and recurrence.
-
-#     Args:
-#         self (Agent): The agent instance calling the tool.
-#         user_id (str): The unique identifier for the user.
-#         title (str): The title of the event.
-#         start (str): The start time of the event in ISO 8601 format.
-#         end (str): The end time of the event in ISO 8601 format.
-#         description (Optional[str]): An optional description for the event.
-#         location (Optional[str]): An optional location for the event.
-#         reminders (Optional[str]): Optional reminders as a comma-separated string of minutes (e.g., "10,30,60").
-#         recurrence (Optional[str]): Optional recurrence rule (e.g., "daily", "weekly", "monthly", "yearly", or a custom RRULE string).
-
-#     Returns:
-#         str: A message indicating success or failure of the event creation, including the event ID and link if successful.
-#     """
-#     import logging
-#     import os
-#     import sys
-#     from typing import Optional
-#     from dotenv import load_dotenv
-#     import re
-
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(logging.DEBUG)
-
-#     try:
-#         load_dotenv()
-#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-#             return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
-
-#         logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
-#         logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
-
-#         if MEMGPT_TOOLS_PATH not in sys.path:
-#             sys.path.append(MEMGPT_TOOLS_PATH)
-
-#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-#         # comment out for unittesting only
-#         from google_utils import GoogleCalendarUtils
-
-#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-#         calendar_id = calendar_utils.get_or_create_user_calendar(user_id)
-#         if not calendar_id:
-#             return "Error: Unable to get or create user calendar"
-
-#         event_data = {
-#             'summary': title,
-#             'location': location,
-#             'description': description,
-#             'start': {'dateTime': start, 'timeZone': 'America/Los_Angeles'},
-#             'end': {'dateTime': end, 'timeZone': 'America/Los_Angeles'},
-#         }
-
-#         if reminders:
-#             reminder_minutes = [int(m.strip()) for m in reminders.split(',')]
-#             event_data['reminders'] = {
-#                 'useDefault': False,
-#                 'overrides': [{'method': 'popup', 'minutes': minutes} for minutes in reminder_minutes]
-#             }
-
-#         if recurrence:
-#             if recurrence.lower() in ['daily', 'weekly', 'monthly', 'yearly']:
-#                 recurrence = f"RRULE:FREQ={recurrence.upper()}"
-#             elif not recurrence.startswith("RRULE:"):
-#                 recurrence = "RRULE:" + recurrence
-#             event_data['recurrence'] = [recurrence]
-
-#         result = calendar_utils.create_calendar_event(calendar_id, event_data)
-
-#         if isinstance(result, dict):
-#             return f"Event created: ID: {result['id']}, Link: {result.get('htmlLink')}"
-#         elif isinstance(result, str):
-#             # Attempt to extract event ID from the link
-#             match = re.search(r"eid=([^&]+)", result)
-#             event_id = match.group(1) if match else "Unknown"
-#             return f"Event created: ID: {event_id}, Link: {result}"
-#         else:
-#             return "Error: Failed to create event"
-
-#     except Exception as e:
-#         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
-#         return f"Error scheduling event: {str(e)}"
+# from google_utils import GoogleCalendarUtils, UserDataManager, GoogleEmailUtils
     
 def schedule_event(
     self: Agent,
@@ -174,6 +73,7 @@ def schedule_event(
     from dotenv import load_dotenv
     import re
 
+
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
 
@@ -197,6 +97,7 @@ def schedule_event(
         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
 
+        #Comment this out for unit testing
         from google_utils import GoogleCalendarUtils
 
         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
@@ -239,102 +140,50 @@ def schedule_event(
         return f"Error scheduling event: {str(e)}"
 
 
-# def fetch_events(
-#     self: Agent,
-#     user_id: str,
-#     max_results: int = 10,
-#     time_min: Optional[str] = None
-# ) -> str:
-#     """
-#     Fetch upcoming events from the user's Google Calendar.
-
-#     Args:
-#         self (Agent): The agent instance calling the tool.
-#         user_id (str): The unique identifier for the user.
-#         max_results (int): The maximum number of events to return. Default is 10.
-#         time_min (Optional[str]): The start time (in ISO 8601 format) from which to fetch events.
-#                                   If not provided, it defaults to the current time.
-
-#     Returns:
-#         str: A formatted string containing the list of upcoming events or an error message.
-#     """
-#     import logging
-#     import os
-#     import sys
-#     from dotenv import load_dotenv
-
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(logging.DEBUG)
-
-#     try:
-#         load_dotenv()
-#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-#             return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
-
-#         logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
-#         logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
-
-#         if MEMGPT_TOOLS_PATH not in sys.path:
-#             sys.path.append(MEMGPT_TOOLS_PATH)
-
-#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-#         # Comment out for unit testing only
-#         from google_utils import GoogleCalendarUtils
-
-#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-#         events = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min)
-
-#         if not events:
-#             return "No upcoming events found."
-
-#         formatted_output = "Upcoming events:\n\n"
-#         for event in events:
-#             formatted_output += f"Title: {event['summary']}\n"
-#             formatted_output += f"Start: {event['start']}\n"
-#             formatted_output += f"End: {event['end']}\n"
-#             formatted_output += f"Description: {event.get('description', 'No description')}\n"
-#             formatted_output += f"Location: {event.get('location', 'No location')}\n"
-#             formatted_output += f"Event ID: {event['id']}\n"
-#             if 'recurrence' in event:
-#                 formatted_output += f"Recurrence: {event['recurrence'][0]}\n"
-#                 formatted_output += "This is a recurring event. Use the series ID to modify or delete the entire series.\n"
-#             formatted_output += f"Event Link: {event.get('htmlLink')}\n\n"
-
-#         return formatted_output
-
-#     except Exception as e:
-#         logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
-#         return f"Error fetching events: {str(e)}"
-
 def fetch_events(
     self: Agent,
     user_id: str,
     max_results: int = 10,
     page_token: Optional[str] = None,
-    time_min: Optional[str] = None
-) -> dict:
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    char_limit: int = 3000
+) -> str:
     """
-    Fetch upcoming events from the user's Google Calendar with optional pagination.
+    Fetch upcoming events from the user's Google Calendar with optional pagination and character limit.
 
     Args:
         self (Agent): The agent instance calling the tool.
         user_id (str): The unique identifier for the user.
-        max_results (int): The maximum number of events to return.
-        page_token (Optional[str]): Token for pagination.
-        time_min (Optional[str]): The minimum time to filter events.
+        max_results (int): The maximum number of events to return. Default is 10.
+        page_token (Optional[str]): Token for pagination. Default is None.
+        time_min (Optional[str]): The minimum time to filter events in ISO 8601 format. Default is None.
+                                  Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
+        time_max (Optional[str]): The maximum time to filter events in ISO 8601 format. Default is None.
+                                  Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
+        char_limit (int): The maximum number of characters allowed in the response. Default is 3000.
 
     Returns:
-        dict: A dictionary containing the events and pagination tokens.
+        str: A string describing the fetched events and pagination tokens, truncated if necessary.
+
+    Examples:
+        Fetching the next 10 upcoming events starting from now:
+        fetch_events(self, user_id='some_user_id', max_results=10, time_min='2024-01-01T00:00:00Z')
+
+        Fetching the next 5 upcoming events with pagination:
+        fetch_events(self, user_id='some_user_id', max_results=5, page_token='token123')
+
+        Fetching events with a character limit:
+        fetch_events(self, user_id='some_user_id', max_results=10, char_limit=3000)
+
+        Fetching events within a specific date range:
+        fetch_events(self, user_id='some_user_id', max_results=10, time_min='2024-01-01T00:00:00Z', time_max='2024-01-14T23:59:59Z')
     """
     import os
     import sys
     import logging
     from dotenv import load_dotenv
+    import json
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
@@ -344,7 +193,7 @@ def fetch_events(
         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-            return {"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"}
+            return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
 
         if MEMGPT_TOOLS_PATH not in sys.path:
             sys.path.append(MEMGPT_TOOLS_PATH)
@@ -352,16 +201,19 @@ def fetch_events(
         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
 
+        # comment out for testing
         from google_utils import GoogleCalendarUtils
 
         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
 
-        events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, page_token)
+        events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, page_token, time_max)
 
         if not events_data.get('items', []):
-            return {"success": False, "message": "No upcoming events found."}
+            return "No upcoming events found."
 
         event_list = []
+        total_chars = 0
+
         for event in events_data['items']:
             event_summary = {
                 'title': event['summary'],
@@ -369,18 +221,32 @@ def fetch_events(
                 'end': event['end'].get('dateTime', event['end'].get('date')),
                 'id': event['id']
             }
+            event_json = json.dumps(event_summary)
+            if total_chars + len(event_json) + 2 > char_limit:  # +2 for the comma and space
+                break
             event_list.append(event_summary)
+            total_chars += len(event_json) + 2  # +2 for the comma and space
 
-        return {
+        result = {
             "success": True,
             "events": event_list,
             "nextPageToken": events_data.get('nextPageToken'),
             "prevPageToken": events_data.get('prevPageToken')
         }
 
+        result_str = json.dumps(result)
+        if len(result_str) > char_limit:
+            result_str = result_str[:char_limit] + "..."
+
+        return result_str
+
     except Exception as e:
         logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
-        return {"success": False, "message": f"Error fetching events: {str(e)}"}
+        return f"Error fetching events: {str(e)}"
+
+# Example usage:
+# fetch_events(self, user_id='some_user_id', max_results=10, char_limit=3000)
+
 def delete_event(
     self: Agent,
     user_id: str,

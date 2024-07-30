@@ -70,6 +70,20 @@ class GoogleCalendarUtils(GoogleAuthBase):
         super().__init__(token_path, credentials_path, ["https://www.googleapis.com/auth/calendar"])
         self.service = build("calendar", "v3", credentials=self.creds)
 
+    def set_calendar_permissions(self, calendar_id: str, user_email: str):
+        try:
+            rule = {
+                'scope': {
+                    'type': 'user',
+                    'value': user_email
+                },
+                'role': 'writer'
+            }
+            self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
+            logger.info(f"Set calendar permissions for {user_email} on calendar {calendar_id}")
+        except Exception as e:
+            logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
+
     def get_or_create_user_calendar(self, user_id: str) -> Optional[str]:
         try:
             user_email = UserDataManager.get_user_email(user_id)
@@ -130,39 +144,46 @@ class GoogleCalendarUtils(GoogleAuthBase):
     #         return []
 
     def fetch_upcoming_events(
-        self, 
-        user_id: str, 
-        max_results: int = 10, 
-        time_min: Optional[str] = None,
-        page_token: Optional[str] = None
-    ) -> dict:
-        try:
-            calendar_id = self.get_or_create_user_calendar(user_id)
-            if not calendar_id:
-                logger.error(f"Unable to get calendar for user_id: {user_id}")
+            self, 
+            user_id: str, 
+            max_results: int = 10, 
+            time_min: Optional[str] = None,
+            page_token: Optional[str] = None,
+            time_max: Optional[str] = None  # Add this parameter
+        ) -> dict:
+            try:
+                calendar_id = self.get_or_create_user_calendar(user_id)
+                if not calendar_id:
+                    logger.error(f"Unable to get calendar for user_id: {user_id}")
+                    return {"items": [], "nextPageToken": None, "prevPageToken": None}
+
+                if not time_min:
+                    time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+
+                # Prepare parameters for the API call
+                params = {
+                    'calendarId': calendar_id,
+                    'timeMin': time_min,
+                    'maxResults': max_results,
+                    'singleEvents': True,
+                    'orderBy': 'startTime',
+                    'pageToken': page_token
+                }
+
+                # Only add timeMax if it's provided
+                if time_max:
+                    params['timeMax'] = time_max
+
+                events_result = self.service.events().list(**params).execute()
+
+                events = events_result.get('items', [])
+                next_page_token = events_result.get('nextPageToken')
+                prev_page_token = events_result.get('prevPageToken')
+                
+                return {"items": events, "nextPageToken": next_page_token, "prevPageToken": prev_page_token}
+            except Exception as e:
+                logger.error(f"Error fetching events: {str(e)}", exc_info=True)
                 return {"items": [], "nextPageToken": None, "prevPageToken": None}
-
-            if not time_min:
-                time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
-
-            events_result = self.service.events().list(
-                calendarId=calendar_id,
-                timeMin=time_min,
-                maxResults=max_results,
-                singleEvents=True,
-                orderBy='startTime',
-                pageToken=page_token
-            ).execute()
-
-            events = events_result.get('items', [])
-            next_page_token = events_result.get('nextPageToken')
-            prev_page_token = events_result.get('prevPageToken')
-            
-            return {"items": events, "nextPageToken": next_page_token, "prevPageToken": prev_page_token}
-        except Exception as e:
-            logger.error(f"Error fetching events: {str(e)}", exc_info=True)
-            return {"items": [], "nextPageToken": None, "prevPageToken": None}
-
 
     def delete_calendar_event(self, user_id: str, event_id: str, delete_series: bool = False) -> dict:
         try:
@@ -187,20 +208,6 @@ class GoogleCalendarUtils(GoogleAuthBase):
         except Exception as e:
             logger.error(f"Error in delete_calendar_event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error deleting event: {str(e)}"}
-
-    def set_calendar_permissions(self, calendar_id: str, user_email: str):
-        try:
-            rule = {
-                'scope': {
-                    'type': 'user',
-                    'value': user_email
-                },
-                'role': 'writer'
-            }
-            self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
-            logger.info(f"Set calendar permissions for {user_email} on calendar {calendar_id}")
-        except Exception as e:
-            logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
 
     def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False) -> dict:
         try:
