@@ -5,6 +5,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+
+from datetime import datetime, timezone
+from typing import Dict, Any
+import pytz
+
 import json
 import os
 import sys
@@ -18,12 +24,8 @@ if project_root not in sys.path:
 from setup_env import setup_env
 setup_env()
 
-# from config import DB_PATH, MEMGPT_TOOLS_PATH
-# from ella_memgpt.tools.custom_tools import CUSTOM_TOOLS
+from typing import Any, Dict, Optional
 
-
-from typing import Any, AsyncGenerator, Dict, Optional
-import jwt
 # Your secret key for signing the JWT - keep it secure and do not expose it
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
@@ -57,10 +59,8 @@ from ella_dbo.db_manager import (
     upsert_user
 )
 
-# from memgpt.memory import ChatMemory
-# from memgpt import create_client
-# from memgpt.agent import Agent
-from agent_creation import handle_default_agent
+
+from agent_creation import handle_default_agent, update_custom_tools
 
 debug = True  # Turn on debug mode to see detailed logs
 
@@ -146,6 +146,7 @@ def update_agent_memory(base_url: str, memgpt_user_api_key: str, default_agent_k
     else:
         logging.info("No changes required for agent memory.")
 
+    update_custom_tools(user_api)
 
 @cl.oauth_callback
 async def oauth_callback(
@@ -193,7 +194,7 @@ async def oauth_callback(
 
 
     # MemGPT and VAPI Assistant Setup
-    if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id:
+    if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id or not default_agent_key:
         admin_api = AdminRESTClient(BASE_URL, master_api_key)
 
         if not memgpt_user_id:
@@ -356,6 +357,55 @@ def guardian_agent_analysis3(message_content):
 
 
 
+def append_human_memory_updates(message_content, memgpt_user_id):
+    """
+    Appends human memory updates to the message content.
+
+    Args:
+        message_content (str): The original message content.
+        memgpt_user_id (str): The user ID.
+
+    Returns:
+        str: The message content with appended human memory updates.
+    """
+
+    # Define the local timezone for PST
+    local_timezone = pytz.timezone('America/Los_Angeles')
+
+    # Get the current time in UTC
+    current_time_utc = datetime.utcnow()
+
+    # Convert the UTC time to the local time zone
+    current_time_local = current_time_utc.replace(tzinfo=pytz.utc).astimezone(local_timezone)
+
+    # Get the current day of the week in local time
+    current_day_of_week = current_time_local.strftime('%A')
+
+    human_memory_updates = [
+        f"current_time_utc: {current_time_utc.isoformat()}",
+        f"current_time_local: {current_time_local.isoformat()}",
+        f"current_day_of_week: {current_day_of_week}"
+    ]
+
+    print(human_memory_updates)
+
+    separator = "\n\n---\n\n"  # Clear separator to distinguish appended content
+    update_header = "# Update human memory\n"
+    message_content_with_updates = (
+        message_content 
+        + separator 
+        + update_header 
+        + "\n".join(human_memory_updates)
+    )
+    return message_content_with_updates
+
+# Example usage
+# message_content = "This is the original message."
+# memgpt_user_id = "user123"
+
+# updated_message_content = append_human_memory_updates(message_content, memgpt_user_id)
+# print(updated_message_content)
+
 DEBUG = True  # Set this to False in production
 
 @cl.set_starters
@@ -411,6 +461,8 @@ async def on_message(message: cl.Message):
             guardian_step.output = guardian_note
             await guardian_step.send()
             message_for_memgpt += f"\n\n{guardian_note}"
+
+        message_for_memgpt= append_human_memory_updates(message_for_memgpt, '')
 
         # Create the main step for the chatbot response
         root_step = cl.Step(name=CHATBOT_NAME, type="llm")

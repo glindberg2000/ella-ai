@@ -81,73 +81,6 @@ def parse_email_message(message: dict) -> dict:
         'body': body
     }
 
-# async def poll_gmail_notifications() -> None:
-#     """
-#     Poll Gmail for new messages and process them.
-#     """
-#     logger.info("Starting Gmail polling task")
-#     creds = None
-#     if os.path.exists(GMAIL_TOKEN_PATH):
-#         try:
-#             creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
-#             logger.info("Successfully loaded credentials from file.")
-#         except Exception as e:
-#             logger.error(f"Error loading credentials: {e}")
-#             return
-#     else:
-#         logger.error(f"Credentials file not found at path: {GMAIL_TOKEN_PATH}")
-#         return
-
-#     if not creds or not creds.valid:
-#         logger.error("Gmail Service: Invalid or missing credentials. Ensure you have a valid token.")
-#         return
-
-#     try:
-#         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-#         user_profile = service.users().getProfile(userId="me").execute()
-#         email_address = user_profile.get("emailAddress")
-#         logger.info(f"Authenticated Gmail account: {email_address}")
-
-#         while True:
-#             try:
-#                 logger.info("Checking for new emails...")
-#                 messages_result = service.users().messages().list(userId="me", q="is:unread", maxResults=25).execute()
-#                 messages = messages_result.get("messages", [])
-#                 for message in messages:
-#                     message_id = message["id"]
-#                     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
-#                     parsed_email = parse_email_message(msg)
-
-#                     if parsed_email:
-#                         logger.info(f"New Email - From: {parsed_email['from']}, To: {parsed_email['to']}, "
-#                                     f"Subject: {parsed_email['subject']}, Body: {parsed_email['body'][:100]}...")
-
-#                         # Only process emails not from system accounts
-#                         if not parsed_email['from'].endswith('@google.com'):
-#                             try:
-#                                 from_email = parsed_email['from'].split('<')[-1].split('>')[0]
-#                                 user_data = await read_user_by_email(from_email)
-#                                 if user_data and user_data.get("default_agent_key"):
-#                                     default_agent_key = user_data['default_agent_key']
-#                                     memgpt_user_api_key = user_data['memgpt_user_api_key']
-#                                     await route_reply_to_memgpt_api(parsed_email['body'], parsed_email['subject'],
-#                                                                     message_id, memgpt_user_api_key, default_agent_key)
-#                                 else:
-#                                     logger.warning(f"User not found or default agent key missing for email: {from_email}")
-#                             except Exception as e:
-#                                 logger.error(f"Error processing email: {str(e)}")
-
-#                     # Mark the message as read
-#                     service.users().messages().modify(userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}).execute()
-
-#             except Exception as e:
-#                 logger.error(f"Error during email processing: {str(e)}")
-
-#             logger.info("Finished checking for new emails. Waiting for 60 seconds before the next check.")
-#             await asyncio.sleep(60)
-#     except Exception as e:
-#         logger.error(f"Error during Gmail polling: {str(e)}")
-
 async def poll_gmail_notifications() -> None:
     """
     Poll Gmail for new messages and process them.
@@ -269,18 +202,6 @@ async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str,
     except Exception as e:
         logging.error(f"Sending message to MemGPT API failed: {str(e)}")
 
-# @asynccontextmanager
-# async def gmail_app_lifespan(app: FastAPI):
-#     """
-#     Lifespan context manager for the Gmail app.
-#     """
-#     logger.info("Gmail app startup tasks")
-#     task = asyncio.create_task(poll_gmail_notifications())
-#     try:
-#         yield
-#     finally:
-#         logger.info("Gmail app cleanup tasks")
-#         task.cancel()
 
 @asynccontextmanager
 async def gmail_app_lifespan(app: FastAPI):
@@ -300,34 +221,3 @@ gmail_app.router.lifespan_context = gmail_app_lifespan
 async def gmail_status():
     return {"status": "running"}
 
-
-# async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str, memgpt_user_api_key: str, agent_key: str) -> None:
-#     """
-#     Route the email reply to the MemGPT API.
-#     """
-#     url = f"{base_url}/api/agents/{agent_key}/messages"
-#     headers = {
-#         "Accept": "application/json",
-#         "Authorization": f"Bearer {memgpt_user_api_key}",
-#         "Content-Type": "application/json",
-#     }
-
-#     formatted_message = (
-#         f"[EMAIL MESSAGE NOTIFICATION - you MUST use send_email NOT send_message if you want to reply to the thread] "
-#         f"[message_id: {message_id}] "
-#         f"[subject: {subject}] "
-#         f"[message: {message}] "
-#     )
-
-#     data = {
-#         "stream": False,
-#         "role": "system",
-#         "message": formatted_message
-#     }
-#     timeout = httpx.Timeout(20.0)
-#     async with httpx.AsyncClient(timeout=timeout) as client:
-#         try:
-#             response = await client.post(url, headers=headers, json=data)
-#             logging.info(f"MemGPT API response: {response.text}")
-#         except Exception as e:
-#             logging.error(f"Sending message to MemGPT API failed: {str(e)}")

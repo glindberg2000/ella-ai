@@ -18,6 +18,18 @@ def read_file_contents(file_path):
         logging.error(f"Error reading file {file_path}: {str(e)}")
         return None
 
+# Doesnn't seem to work. Probably not implemented.
+def update_custom_tools(user_api):
+    created_tools = []
+    for tool in CUSTOM_TOOLS:
+        try:
+            created_tool = user_api.create_tool(tool, name=tool.__name__, update=True)
+            created_tools.append(created_tool.name)
+            logging.info(f"Updated custom tool: {created_tool.name}")
+        except Exception as e:
+            logging.error(f"Failed to update custom tool {tool.__name__}: {str(e)}")
+    return created_tools
+
 def create_custom_tools(user_api):
     created_tools = []
     for tool in CUSTOM_TOOLS:
@@ -33,12 +45,16 @@ def handle_default_agent(memgpt_user_id, user_api):
     logging.info(f"Checking for default agent for user {memgpt_user_id}")
     try:
         agent_info = user_api.list_agents()
-        
-        if not agent_info.num_agents:
+        if agent_info.num_agents > 0:
+            default_agent_key = agent_info.agents[0]['id']
+            logging.info(f"Default agent key found: {default_agent_key}")
+            agent_state = user_api.get_agent(agent_id=default_agent_key)
+            return default_agent_key, agent_state  
+        else:
             logging.info(f"No agents found for user {memgpt_user_id}, creating default agent")
             
             # Read the contents of the persona and human templates
-            base_dir = os.path.expanduser("~/.memgpt")
+            base_dir = os.path.expanduser("./ella_memgpt/templates")
             human_content = read_file_contents(os.path.join(base_dir, "humans", "plato.txt"))
             persona_content = read_file_contents(os.path.join(base_dir, "personas", "ella_persona.txt"))
             
@@ -76,12 +92,7 @@ def handle_default_agent(memgpt_user_id, user_api):
                 logging.warning(f"Custom tool creation verification failed")
             
             return default_agent_key, agent_state
-        else:
-            default_agent_key = agent_info.agents[0].id
-            agent_state = user_api.get_agent(agent_id=default_agent_key)
-            logging.info(f"Existing agent found for user {memgpt_user_id}. Using agent: {default_agent_key}")
-            return default_agent_key, agent_state      
-    
+
     except Exception as e:
         logging.error(f"An error occurred while handling agent data for user {memgpt_user_id}: {e}")
         raise
