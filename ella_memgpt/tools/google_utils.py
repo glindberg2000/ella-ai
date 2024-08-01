@@ -166,8 +166,7 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
 
-
-def fetch_upcoming_events(
+    def fetch_upcoming_events(
         self, 
         user_id: str, 
         max_results: int = 10, 
@@ -175,50 +174,50 @@ def fetch_upcoming_events(
         time_max: Optional[str] = None,
         local_timezone: str = 'America/Los_Angeles'
     ) -> dict:
-    try:
-        calendar_id = self.get_or_create_user_calendar(user_id)
-        logging.debug(f"Calendar ID for user {user_id}: {calendar_id}")
-        
-        if not calendar_id:
-            logging.error(f"Unable to get calendar for user_id: {user_id}")
+        try:
+            calendar_id = self.get_or_create_user_calendar(user_id)
+            logging.debug(f"Calendar ID for user {user_id}: {calendar_id}")
+            
+            if not calendar_id:
+                logging.error(f"Unable to get calendar for user_id: {user_id}")
+                return {"items": []}
+
+            if not time_min:
+                time_min = datetime.now(pytz.timezone(local_timezone)).isoformat()
+            if not time_max:
+                time_max = (datetime.now(pytz.timezone(local_timezone)) + timedelta(days=1)).isoformat()
+
+            params = {
+                'calendarId': calendar_id,
+                'timeMin': time_min,
+                'timeMax': time_max,
+                'maxResults': max_results,
+                'singleEvents': True,
+                'orderBy': 'startTime',
+                'timeZone': local_timezone
+            }
+
+            logging.debug(f"Calendar API request params: {params}")
+
+            events_result = self.service.events().list(**params).execute()
+
+            logging.debug(f"Raw Calendar API response: {events_result}")
+
+            events = events_result.get('items', [])
+            
+            logging.debug(f"Number of events fetched: {len(events)}")
+
+            # Convert event times to user's timezone
+            for event in events:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                end = event['end'].get('dateTime', event['end'].get('date'))
+                event['start']['dateTime'] = self._localize_time(start, local_timezone).isoformat()
+                event['end']['dateTime'] = self._localize_time(end, local_timezone).isoformat()
+
+            return {"items": events}
+        except Exception as e:
+            logging.error(f"Error fetching events: {str(e)}", exc_info=True)
             return {"items": []}
-
-        if not time_min:
-            time_min = datetime.now(pytz.timezone(local_timezone)).isoformat()
-        if not time_max:
-            time_max = (datetime.now(pytz.timezone(local_timezone)) + timedelta(days=1)).isoformat()
-
-        params = {
-            'calendarId': calendar_id,
-            'timeMin': time_min,
-            'timeMax': time_max,
-            'maxResults': max_results,
-            'singleEvents': True,
-            'orderBy': 'startTime',
-            'timeZone': local_timezone
-        }
-
-        logging.debug(f"Calendar API request params: {params}")
-
-        events_result = self.service.events().list(**params).execute()
-
-        logging.debug(f"Raw Calendar API response: {events_result}")
-
-        events = events_result.get('items', [])
-        
-        logging.debug(f"Number of events fetched: {len(events)}")
-
-        # Convert event times to user's timezone
-        for event in events:
-            start = event['start'].get('dateTime', event['start'].get('date'))
-            end = event['end'].get('dateTime', event['end'].get('date'))
-            event['start']['dateTime'] = self._localize_time(start, local_timezone).isoformat()
-            event['end']['dateTime'] = self._localize_time(end, local_timezone).isoformat()
-
-        return {"items": events}
-    except Exception as e:
-        logging.error(f"Error fetching events: {str(e)}", exc_info=True)
-        return {"items": []}
 
 
     def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False, local_timezone: str = 'America/Los_Angeles') -> dict:

@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 from dateutil.parser import isoparse
 import pytz
-from setup_env import setup_env  # Import setup_env
+from setup_env import setup_env
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -18,7 +18,7 @@ from ella_dbo.db_manager import (
     get_user_data_by_field,
     close_connection
 )
-from ella_memgpt.tools.google_utils import GoogleCalendarUtils, UserDataManager
+from ella_memgpt.tools.google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
 
 # Setup environment
 setup_env()
@@ -29,7 +29,7 @@ load_dotenv()
 
 # Constants
 base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
-master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
+master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovememgpt1")
 GCAL_TOKEN_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'gcal_token.json')
 GMAIL_TOKEN_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'gmail_token.json')
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
@@ -61,18 +61,10 @@ if not GMAIL_TOKEN_PATH or not os.path.exists(GMAIL_TOKEN_PATH):
 reminder_app = FastAPI()
 
 def convert_to_utc_time(local_time_str, timezone='America/Los_Angeles'):
-    local_tz = pytz.timezone(timezone)
-    local_time = isoparse(local_time_str)
-    if local_time.tzinfo is None:
-        local_time = local_tz.localize(local_time)
-    utc_time = local_time.astimezone(pytz.utc)
-    return utc_time
+    return parse_datetime(local_time_str, timezone).astimezone(pytz.UTC)
 
 def convert_to_local_time(utc_time_str, timezone='America/Los_Angeles'):
-    utc_time = isoparse(utc_time_str)
-    local_tz = pytz.timezone(timezone)
-    local_time = utc_time.astimezone(local_tz)
-    return local_time
+    return parse_datetime(utc_time_str, 'UTC').astimezone(pytz.timezone(timezone))
 
 async def fetch_upcoming_events_for_user(user_id: str, memgpt_user_api_key: str, user_timezone: str) -> dict:
     """
@@ -82,18 +74,19 @@ async def fetch_upcoming_events_for_user(user_id: str, memgpt_user_api_key: str,
     time_min = datetime.now(pytz.timezone(user_timezone)).isoformat()
     time_max = (datetime.now(pytz.timezone(user_timezone)) + timedelta(days=1)).isoformat()
     logger.info(f"Fetching events for user {user_id} between {time_min} and {time_max}")
-    events = calendar_utils.fetch_upcoming_events(user_id, max_results=10, time_min=time_min, time_max=time_max, user_timezone=user_timezone)
+    events = calendar_utils.fetch_upcoming_events(user_id, max_results=10, time_min=time_min, time_max=time_max, local_timezone=user_timezone)
     logger.info(f"Fetched events for user {user_id}: {events}")
     return events
 
-async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: str) -> None:
+async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: str, user_timezone: str) -> None:
     """
     Send an alert to the LLM about an upcoming event.
     """
-    local_start_time = convert_to_local_time(event['start']['dateTime'])
-    alert_type = 'send_message'
+    local_start_time = convert_to_local_time(event['start']['dateTime'], user_timezone)
+    local_end_time = convert_to_local_time(event['end']['dateTime'], user_timezone)
+    alert_type = 'send_email'
     if event['reminders'].get('useDefault'):
-        alert_type = 'send_message'
+        alert_type = 'send_email'
     else:
         for reminder in event['reminders'].get('overrides', []):
             if reminder['method'] == 'email':
@@ -108,8 +101,8 @@ async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: st
         f"[event_id: {event['id']}] "
         f"[summary: {event['summary']}] "
         f"[start: {local_start_time.strftime('%Y-%m-%d %H:%M:%S %Z')}] "
-        f"[end: {convert_to_local_time(event['end']['dateTime']).strftime('%Y-%m-%d %H:%M:%S %Z')}] "
-        f"[message: {event['description']}] "
+        f"[end: {local_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}] "
+        f"[message: {event.get('description', 'No description')}] "
         f"[alert_type: {alert_type}] "
     )
 
@@ -139,12 +132,16 @@ async def poll_calendar_for_events() -> None:
                     memgpt_user_api_key = user_data.get('memgpt_user_api_key')
                     default_agent_key = user_data.get('default_agent_key')
                     user_timezone = user_data.get('local_timezone', 'America/Los_Angeles')
-                    events = await fetch_upcoming_events_for_user(memgpt_user_id, memgpt_user_api_key)
+                    if not is_valid_timezone(user_timezone):
+                        logger.warning(f"Invalid timezone for user {memgpt_user_id}: {user_timezone}. Using default.")
+                        user_timezone = 'America/Los_Angeles'
+                    
+                    events = await fetch_upcoming_events_for_user(memgpt_user_id, memgpt_user_api_key, user_timezone)
                     now = datetime.now(pytz.timezone(user_timezone))
                     events_within_alert = []
                     for event in events.get('items', []):
                         try:
-                            start_time = pytz.timezone(user_timezone).localize(datetime.fromisoformat(event['start']['dateTime']))
+                            start_time = parse_datetime(event['start']['dateTime'], user_timezone)
                             alert_time = None
                             if event['reminders'].get('useDefault'):
                                 alert_time = start_time - timedelta(minutes=30)  # Default alert 30 minutes before
@@ -163,13 +160,13 @@ async def poll_calendar_for_events() -> None:
 
                             if alert_time and now <= alert_time <= (now + timedelta(minutes=5)):
                                 events_within_alert.append(event)
-                                await send_alert_to_llm(event, memgpt_user_api_key, default_agent_key)
+                                await send_alert_to_llm(event, memgpt_user_api_key, default_agent_key, user_timezone)
                         except Exception as e:
-                            logger.error(f"Error parsing event start time: {e}")
+                            logger.error(f"Error processing event: {e}", exc_info=True)
                     if not events_within_alert:
                         logger.info(f"No events fall within the alert window for user {memgpt_user_id}")
         except Exception as e:
-            logger.error(f"Error during polling: {str(e)}")
+            logger.error(f"Error during polling: {str(e)}", exc_info=True)
         finally:
             close_connection(conn)
         logger.info("Finished checking for upcoming events. Waiting for 5 minutes before the next check.")
