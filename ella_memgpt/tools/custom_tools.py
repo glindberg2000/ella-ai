@@ -12,6 +12,413 @@ from enum import Enum
 # Global imports for testing purposes only. Comment out the internal import versions while testing.
 # from google_utils import GoogleCalendarUtils, UserDataManager, GoogleEmailUtils
     
+# def schedule_event(
+#     self: Agent,
+#     user_id: str,
+#     title: str,
+#     start: str,
+#     end: str,
+#     description: Optional[str] = None,
+#     location: Optional[str] = None,
+#     reminders: Optional[str] = None,
+#     recurrence: Optional[str] = None,
+#     local_timezone: Optional[str] = None
+# ) -> str:
+#     """
+#     Schedule a new event in the user's Google Calendar.
+
+#     Args:
+#         self (Agent): The agent instance calling the tool.
+#         user_id (str): The unique identifier for the user.
+#         title (str): The title of the event.
+#         start (str): The start time in ISO 8601 format.
+#         end (str): The end time in ISO 8601 format.
+#         description (Optional[str]): The description of the event.
+#         location (Optional[str]): The location of the event.
+#         reminders (Optional[str]): Reminders as a comma-separated string of minutes.
+#         recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
+#         local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
+
+#     Returns:
+#         str: A message indicating success or failure of the event creation.
+
+#     Examples:
+#         1. Schedule a one-time event in the user's default timezone:
+#             schedule_event(
+#                 self,
+#                 user_id='user123',
+#                 title='Doctor Appointment',
+#                 start='2024-08-01T10:00:00',
+#                 end='2024-08-01T11:00:00',
+#                 description='Annual check-up',
+#                 location='123 Clinic Street',
+#                 reminders='30,10'
+#             )
+
+#         2. Schedule a weekly recurring event on Mondays and Tuesdays in a specific timezone:
+#             schedule_event(
+#                 self,
+#                 user_id='user123',
+#                 title='Morning Jog',
+#                 start='2024-08-01T07:00:00',
+#                 end='2024-08-01T08:00:00',
+#                 description='Time for a refreshing jog!',
+#                 location='The park',
+#                 reminders='30,10',
+#                 recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU',
+#                 local_timezone='America/New_York'
+#             )
+
+#         3. Schedule an event in a different timezone:
+#             schedule_event(
+#                 self,
+#                 user_id='user123',
+#                 title='International Conference Call',
+#                 start='2024-08-15T09:00:00',
+#                 end='2024-08-15T10:00:00',
+#                 description='Call with international partners',
+#                 reminders='15',
+#                 local_timezone='Europe/London'
+#             )
+#     """
+#     import logging
+#     import os
+#     import sys
+#     from typing import Optional
+#     from dotenv import load_dotenv
+#     import re
+#     from datetime import datetime, timezone
+#     import pytz
+
+
+#     logger = logging.getLogger(__name__)
+#     logger.setLevel(logging.DEBUG)
+
+#     def is_valid_rrule(rrule: str) -> bool:
+#         valid_frequencies = {'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'}
+#         return rrule.startswith('RRULE:') and any(freq in rrule for freq in valid_frequencies)
+
+#     try:
+#         load_dotenv()
+#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
+#             return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
+
+#         logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
+#         logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
+
+#         if MEMGPT_TOOLS_PATH not in sys.path:
+#             sys.path.append(MEMGPT_TOOLS_PATH)
+
+#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
+#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
+
+#         #Comment this out for unit testing
+#         from google_utils import GoogleCalendarUtils, UserDataManager
+
+#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+
+#         if not local_timezone:
+#             local_timezone = UserDataManager.get_user_timezone(user_id)
+        
+#         # Convert start and end times to the user's timezone
+#         tz = pytz.timezone(local_timezone)
+#         start_time = datetime.fromisoformat(start.replace('Z', '+00:00')).astimezone(tz)
+#         end_time = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(tz)
+
+#         event_data = {
+#             'summary': title,
+#             'start': {'dateTime': start_time.isoformat(), 'timeZone': local_timezone},
+#             'end': {'dateTime': end_time.isoformat(), 'timeZone': local_timezone},
+#             'description': description,
+#             'location': location,
+#         }
+        
+
+#         if reminders:
+#             reminder_minutes = [int(m.strip()) for m in reminders.split(',')]
+#             event_data['reminders'] = {
+#                 'useDefault': False,
+#                 'overrides': [{'method': 'popup', 'minutes': minutes} for minutes in reminder_minutes]
+#             }
+
+#         if recurrence:
+#             if not is_valid_rrule(recurrence):
+#                 return "Error: Recurrence rule must be in RRULE format (e.g., 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU')."
+#             event_data['recurrence'] = [recurrence]
+
+#         calendar_id = calendar_utils.get_or_create_user_calendar(user_id)
+#         if not calendar_id:
+#             return "Error: Unable to get or create user calendar"
+
+#         #result = calendar_utils.create_calendar_event(calendar_id, event_data)
+#         result = calendar_utils.create_calendar_event(calendar_id, event_data, local_timezone)
+
+
+#         if isinstance(result, dict):
+#             return f"Event created: ID: {result['id']}, Link: {result.get('htmlLink')}"
+#         elif isinstance(result, str):
+#             return f"Event created: ID: {result}"
+#         else:
+#             return "Error: Failed to create event"
+
+#     except Exception as e:
+#         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
+#         return f"Error scheduling event: {str(e)}"
+
+# def fetch_events(
+#     self: Agent,
+#     user_id: str,
+#     max_results: int = 10,
+#     time_min: Optional[str] = None,
+#     time_max: Optional[str] = None
+# ) -> str:
+#     """
+#     Fetch upcoming events from the user's Google Calendar within the specified time range.
+
+#     Args:
+#         self (Agent): The agent instance calling the tool.
+#         user_id (str): The unique identifier for the user.
+#         max_results (int): The maximum number of events to return. Default is 10.
+#         time_min (Optional[str]): The minimum time to filter events in ISO 8601 format. Default is None.
+#                                   Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
+#         time_max (Optional[str]): The maximum time to filter events in ISO 8601 format. Default is None.
+#                                   Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
+
+#     Returns:
+#         str: A string describing the fetched events.
+
+#     Examples:
+#         Fetching the next 10 upcoming events starting from now:
+#         fetch_events(self, user_id='some_user_id', max_results=10, time_min='2024-01-01T00:00:00Z')
+
+#         Fetching events within a specific date range:
+#         fetch_events(self, user_id='some_user_id', max_results=10, time_min='2024-01-01T00:00:00Z', time_max='2024-01-14T23:59:59Z')
+#     """
+#     import os
+#     import sys
+#     import logging
+#     from dotenv import load_dotenv
+#     import json
+#     from datetime import datetime
+#     import pytz
+
+#     logger = logging.getLogger(__name__)
+#     logger.setLevel(logging.DEBUG)
+
+#     try:
+#         load_dotenv()
+#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
+#             return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
+
+#         if MEMGPT_TOOLS_PATH not in sys.path:
+#             sys.path.append(MEMGPT_TOOLS_PATH)
+
+#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
+#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
+
+#         from google_utils import GoogleCalendarUtils, UserDataManager
+
+#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+
+#         user_timezone = UserDataManager.get_user_timezone(user_id)
+
+#         # Adjust time_min and time_max to user timezone if provided
+#         tz = pytz.timezone(user_timezone)
+#         if time_min:
+#             time_min = datetime.fromisoformat(time_min.replace('Z', '+00:00')).astimezone(tz).isoformat()
+#         if time_max:
+#             time_max = datetime.fromisoformat(time_max.replace('Z', '+00:00')).astimezone(tz).isoformat()
+
+#         events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, time_max, user_timezone)
+
+#         if not events_data.get('items', []):
+#             return "No upcoming events found."
+
+#         event_list = []
+#         for event in events_data['items']:
+#             event_summary = {
+#                 'title': event['summary'],
+#                 'start': event['start'].get('dateTime', event['start'].get('date')),
+#                 'end': event['end'].get('dateTime', event['end'].get('date')),
+#                 'id': event['id']
+#             }
+#             event_list.append(event_summary)
+
+#         result = {
+#             "success": True,
+#             "events": event_list
+#         }
+
+#         return json.dumps(result)
+
+#     except Exception as e:
+#         logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
+#         return f"Error fetching events: {str(e)}"
+
+# def update_event(
+#     self: Agent,
+#     user_id: str,
+#     event_id: str,
+#     title: Optional[str] = None,
+#     start: Optional[str] = None,
+#     end: Optional[str] = None,
+#     description: Optional[str] = None,
+#     location: Optional[str] = None,
+#     reminders: Optional[str] = None,
+#     recurrence: Optional[str] = None,
+#     update_series: bool = False,
+#     local_timezone: Optional[str] = None
+# ) -> dict:
+#     """
+#     Update an existing event in the user's Google Calendar.
+
+#     Args:
+#         self (Agent): The agent instance calling the tool.
+#         user_id (str): The unique identifier for the user.
+#         event_id (str): The unique identifier for the event to be updated.
+#         title (Optional[str]): The new title for the event. If None, the title remains unchanged.
+#         start (Optional[str]): The new start time in ISO 8601 format. If None, the start time remains unchanged.
+#         end (Optional[str]): The new end time in ISO 8601 format. If None, the end time remains unchanged.
+#         description (Optional[str]): The new description for the event. If None, the description remains unchanged.
+#         location (Optional[str]): The new location for the event. If None, the location remains unchanged.
+#         reminders (Optional[str]): New reminders as a comma-separated string of minutes (e.g., "10,30,60"). If None, reminders remain unchanged.
+#         recurrence (Optional[str]): New recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU"). If None, recurrence remains unchanged.
+#         update_series (bool): If True, update the entire event series if the event is part of a recurring series.
+#         local_timezone (Optional[str]): The new timezone for the event. If None, the timezone remains unchanged.
+
+#     Returns:
+#         dict: A dictionary containing information about the success or failure of the event update.
+
+#     Examples:
+#         1. Update the title and description of a one-time event:
+#             update_event(
+#                 self,
+#                 user_id='user123',
+#                 event_id='event123',
+#                 title='Doctor Appointment - Updated',
+#                 description='Annual check-up with Dr. Smith.'
+#             )
+
+#         2. Update the time and timezone of a recurring event:
+#             update_event(
+#                 self,
+#                 user_id='user123',
+#                 event_id='event123',
+#                 start='2024-08-01T07:30:00',
+#                 end='2024-08-01T08:30:00',
+#                 update_series=True,
+#                 local_timezone='America/Los_Angeles'
+#             )
+
+#         3. Add a recurrence rule to an existing event:
+#             update_event(
+#                 self,
+#                 user_id='user123',
+#                 event_id='event123',
+#                 recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR'
+#             )
+
+#         4. Change the timezone of an event without changing the time:
+#             update_event(
+#                 self,
+#                 user_id='user123',
+#                 event_id='event123',
+#                 local_timezone='Europe/Paris'
+#             )
+
+#         5. Update multiple aspects of an event, including timezone:
+#             update_event(
+#                 self,
+#                 user_id='user123',
+#                 event_id='event123',
+#                 title='Updated Meeting',
+#                 start='2024-08-02T15:00:00',
+#                 end='2024-08-02T16:00:00',
+#                 description='Rescheduled team meeting',
+#                 location='Conference Room B',
+#                 reminders='15,5',
+#                 local_timezone='Asia/Tokyo'
+#             )
+#     """
+#     import logging
+#     import os
+#     import sys
+#     from dotenv import load_dotenv
+#     from datetime import datetime
+#     import pytz
+
+#     logger = logging.getLogger(__name__)
+#     logger.setLevel(logging.DEBUG)
+
+#     try:
+#         load_dotenv()
+#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
+#             return {"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"}
+
+#         logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
+#         logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
+
+#         if MEMGPT_TOOLS_PATH not in sys.path:
+#             sys.path.append(MEMGPT_TOOLS_PATH)
+
+#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
+#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
+
+#         # Temporarily disable for unit tests
+#         from google_utils import GoogleCalendarUtils, UserDataManager
+
+#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+
+#         event_data = {}
+#         if title:
+#             event_data['summary'] = title
+
+#         if not local_timezone:
+#             local_timezone = UserDataManager.get_user_timezone(user_id)
+#         else:
+#             event_data['local_timezone'] = local_timezone
+        
+#         # Convert start and end times to the user's timezone
+#         tz = pytz.timezone(local_timezone)
+#         if start:
+#             start_time = datetime.fromisoformat(start.replace('Z', '+00:00')).astimezone(tz)
+#             event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
+#         if end:
+#             end_time = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(tz)
+#             event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
+        
+#         if description:
+#             event_data['description'] = description
+#         if location:
+#             event_data['location'] = location
+#         if reminders:
+#             reminder_minutes = [int(m.strip()) for m in reminders.split(',')]
+#             event_data['reminders'] = {
+#                 'useDefault': False,
+#                 'overrides': [{'method': 'popup', 'minutes': minutes} for minutes in reminder_minutes]
+#             }
+#         if recurrence:
+#             if not recurrence.startswith('RRULE:'):
+#                 recurrence = f"RRULE:{recurrence}"
+#             event_data['recurrence'] = [recurrence]
+
+#         result = calendar_utils.update_calendar_event(user_id, event_id, event_data, update_series, local_timezone)
+
+#         if result.get("success", False):
+#             return {"success": True, "event_id": result['event']['id'], "message": "Event updated successfully"}
+#         else:
+#             return {"success": False, "message": result.get('message', 'Unknown error')}
+
+#     except Exception as e:
+#         logger.error(f"Error in update_event: {str(e)}", exc_info=True)
+#         return {"success": False, "message": f"Error updating event: {str(e)}"}
+    
 def schedule_event(
     self: Agent,
     user_id: str,
@@ -21,7 +428,8 @@ def schedule_event(
     description: Optional[str] = None,
     location: Optional[str] = None,
     reminders: Optional[str] = None,
-    recurrence: Optional[str] = None
+    recurrence: Optional[str] = None,
+    local_timezone: Optional[str] = None
 ) -> str:
     """
     Schedule a new event in the user's Google Calendar.
@@ -36,12 +444,13 @@ def schedule_event(
         location (Optional[str]): The location of the event.
         reminders (Optional[str]): Reminders as a comma-separated string of minutes.
         recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
+        local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
 
     Returns:
         str: A message indicating success or failure of the event creation.
 
     Examples:
-        1. Schedule a one-time event:
+        1. Schedule a one-time event in the user's default timezone:
             schedule_event(
                 self,
                 user_id='user123',
@@ -53,7 +462,7 @@ def schedule_event(
                 reminders='30,10'
             )
 
-        2. Schedule a weekly recurring event on Mondays and Tuesdays:
+        2. Schedule a weekly recurring event on Mondays and Tuesdays in a specific timezone:
             schedule_event(
                 self,
                 user_id='user123',
@@ -63,7 +472,20 @@ def schedule_event(
                 description='Time for a refreshing jog!',
                 location='The park',
                 reminders='30,10',
-                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU'
+                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU',
+                local_timezone='America/New_York'
+            )
+
+        3. Schedule an event in a different timezone:
+            schedule_event(
+                self,
+                user_id='user123',
+                title='International Conference Call',
+                start='2024-08-15T09:00:00',
+                end='2024-08-15T10:00:00',
+                description='Call with international partners',
+                reminders='15',
+                local_timezone='Europe/London'
             )
     """
     import logging
@@ -72,6 +494,9 @@ def schedule_event(
     from typing import Optional
     from dotenv import load_dotenv
     import re
+    from datetime import datetime
+    import pytz
+    import json
 
 
     logger = logging.getLogger(__name__)
@@ -86,10 +511,7 @@ def schedule_event(
         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-            return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
-
-        logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
-        logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
+            return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
 
         if MEMGPT_TOOLS_PATH not in sys.path:
             sys.path.append(MEMGPT_TOOLS_PATH)
@@ -97,17 +519,24 @@ def schedule_event(
         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
 
-        #Comment this out for unit testing
-        from google_utils import GoogleCalendarUtils
+        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
 
         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
 
+        if not local_timezone:
+            local_timezone = UserDataManager.get_user_timezone(user_id)
+        elif not is_valid_timezone(local_timezone):
+            return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
+        
+        start_time = parse_datetime(start, local_timezone)
+        end_time = parse_datetime(end, local_timezone)
+
         event_data = {
             'summary': title,
-            'location': location,
+            'start': {'dateTime': start_time.isoformat(), 'timeZone': local_timezone},
+            'end': {'dateTime': end_time.isoformat(), 'timeZone': local_timezone},
             'description': description,
-            'start': {'dateTime': start, 'timeZone': 'America/Los_Angeles'},
-            'end': {'dateTime': end, 'timeZone': 'America/Los_Angeles'},
+            'location': location,
         }
 
         if reminders:
@@ -119,70 +548,208 @@ def schedule_event(
 
         if recurrence:
             if not is_valid_rrule(recurrence):
-                return "Error: Recurrence rule must be in RRULE format (e.g., 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU')."
+                return json.dumps({"success": False, "message": "Error: Recurrence rule must be in RRULE format (e.g., 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU')."})
             event_data['recurrence'] = [recurrence]
 
-        calendar_id = calendar_utils.get_or_create_user_calendar(user_id)
-        if not calendar_id:
-            return "Error: Unable to get or create user calendar"
+        result = calendar_utils.create_calendar_event(user_id, event_data, local_timezone)
 
-        result = calendar_utils.create_calendar_event(calendar_id, event_data)
-
-        if isinstance(result, dict):
-            return f"Event created: ID: {result['id']}, Link: {result.get('htmlLink')}"
-        elif isinstance(result, str):
-            return f"Event created: ID: {result}"
+        if result.get("success", False):
+            return json.dumps({"success": True, "message": f"Event created: ID: {result.get('id', 'Unknown')}, Link: {result.get('htmlLink', 'No link available')}"})
         else:
-            return "Error: Failed to create event"
+            return json.dumps({"success": False, "message": result.get('message', 'Failed to create event')})
 
     except Exception as e:
         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
-        return f"Error scheduling event: {str(e)}"
+        return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
 
 
 def fetch_events(
     self: Agent,
     user_id: str,
     max_results: int = 10,
-    page_token: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
-    char_limit: int = 3000
+    local_timezone: Optional[str] = None
 ) -> str:
     """
-    Fetch upcoming events from the user's Google Calendar with optional pagination and character limit.
+    Fetch upcoming events from the user's Google Calendar within the specified time range.
 
     Args:
         self (Agent): The agent instance calling the tool.
         user_id (str): The unique identifier for the user.
         max_results (int): The maximum number of events to return. Default is 10.
-        page_token (Optional[str]): Token for pagination. Default is None.
         time_min (Optional[str]): The minimum time to filter events in ISO 8601 format. Default is None.
                                   Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
         time_max (Optional[str]): The maximum time to filter events in ISO 8601 format. Default is None.
                                   Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
-        char_limit (int): The maximum number of characters allowed in the response. Default is 3000.
+        local_timezone (Optional[str]): The timezone for the events. If None, the user's default timezone will be used.
 
     Returns:
-        str: A string describing the fetched events and pagination tokens, truncated if necessary.
-
-    Examples:
-        Fetching the next 10 upcoming events starting from now:
-        fetch_events(self, user_id='some_user_id', max_results=10, time_min='2024-01-01T00:00:00Z')
-
-        Fetching the next 5 upcoming events with pagination:
-        fetch_events(self, user_id='some_user_id', max_results=5, page_token='token123')
-
-        Fetching events with a character limit:
-        fetch_events(self, user_id='some_user_id', max_results=10, char_limit=3000)
-
-        Fetching events within a specific date range:
-        fetch_events(self, user_id='some_user_id', max_results=10, time_min='2024-01-01T00:00:00Z', time_max='2024-01-14T23:59:59Z')
+        str: A JSON string describing the fetched events.
     """
     import os
     import sys
     import logging
     from dotenv import load_dotenv
+    import json
+    from datetime import datetime
+    import pytz
+    from typing import Optional
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        load_dotenv()
+        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
+            return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
+
+        if MEMGPT_TOOLS_PATH not in sys.path:
+            sys.path.append(MEMGPT_TOOLS_PATH)
+
+        GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
+        GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
+
+        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
+
+        calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+
+        if not local_timezone:
+            local_timezone = UserDataManager.get_user_timezone(user_id)
+        elif not is_valid_timezone(local_timezone):
+            return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
+
+        logger.debug(f"Fetching events for user_id: {user_id}, timezone: {local_timezone}")
+
+        tz = pytz.timezone(local_timezone)
+        now = datetime.now(tz)
+
+        if not time_min:
+            time_min = now.isoformat()
+        if not time_max:
+            time_max = (now + timedelta(days=1)).isoformat()
+
+        logger.debug(f"Time range: {time_min} to {time_max}")
+
+        events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, time_max, local_timezone)
+
+        logger.debug(f"Fetched events data: {events_data}")
+
+        if not events_data.get('items', []):
+            return json.dumps({"success": True, "message": "No upcoming events found.", "events": []})
+
+        event_list = []
+        for event in events_data['items']:
+            event_summary = {
+                'title': event['summary'],
+                'start': event['start'].get('dateTime', event['start'].get('date')),
+                'end': event['end'].get('dateTime', event['end'].get('date')),
+                'id': event['id']
+            }
+            event_list.append(event_summary)
+
+        result = {
+            "success": True,
+            "events": event_list
+        }
+
+        return json.dumps(result)
+
+    except Exception as e:
+        logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
+        return json.dumps({"success": False, "message": f"Error fetching events: {str(e)}"})
+
+def update_event(
+    self: Agent,
+    user_id: str,
+    event_id: str,
+    title: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    description: Optional[str] = None,
+    location: Optional[str] = None,
+    reminders: Optional[str] = None,
+    recurrence: Optional[str] = None,
+    update_series: bool = False,
+    local_timezone: Optional[str] = None
+) -> str:
+    """
+    Args:
+        self (Agent): The agent instance calling the tool.
+        user_id (str): The unique identifier for the user.
+        event_id (str): The unique identifier for the event to be updated.
+        title (Optional[str]): The new title for the event. If None, the title remains unchanged.
+        start (Optional[str]): The new start time in ISO 8601 format. If None, the start time remains unchanged.
+        end (Optional[str]): The new end time in ISO 8601 format. If None, the end time remains unchanged.
+        description (Optional[str]): The new description for the event. If None, the description remains unchanged.
+        location (Optional[str]): The new location for the event. If None, the location remains unchanged.
+        reminders (Optional[str]): New reminders as a comma-separated string of minutes (e.g., "10,30,60"). If None, reminders remain unchanged.
+        recurrence (Optional[str]): New recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU"). If None, recurrence remains unchanged.
+        update_series (bool): If True, update the entire event series if the event is part of a recurring series.
+        local_timezone (Optional[str]): The new timezone for the event. If None, the timezone remains unchanged.
+
+    Returns:
+        str: A JSON string containing information about the success or failure of the event update.
+
+    Examples:
+        1. Update the title and description of a one-time event:
+            update_event(
+                self,
+                user_id='user123',
+                event_id='event123',
+                title='Doctor Appointment - Updated',
+                description='Annual check-up with Dr. Smith.'
+            )
+
+        2. Update the time and timezone of a recurring event:
+            update_event(
+                self,
+                user_id='user123',
+                event_id='event123',
+                start='2024-08-01T07:30:00',
+                end='2024-08-01T08:30:00',
+                update_series=True,
+                local_timezone='America/Los_Angeles'
+            )
+
+        3. Add a recurrence rule to an existing event:
+            update_event(
+                self,
+                user_id='user123',
+                event_id='event123',
+                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR'
+            )
+
+        4. Change the timezone of an event without changing the time:
+            update_event(
+                self,
+                user_id='user123',
+                event_id='event123',
+                local_timezone='Europe/Paris'
+            )
+
+        5. Update multiple aspects of an event, including timezone:
+            update_event(
+                self,
+                user_id='user123',
+                event_id='event123',
+                title='Updated Meeting',
+                start='2024-08-02T15:00:00',
+                end='2024-08-02T16:00:00',
+                description='Rescheduled team meeting',
+                location='Conference Room B',
+                reminders='15,5',
+                local_timezone='Asia/Tokyo'
+            )
+    """
+    import logging
+    import os
+    import sys
+    from dotenv import load_dotenv
+    from datetime import datetime
+    import pytz
     import json
 
     logger = logging.getLogger(__name__)
@@ -193,7 +760,7 @@ def fetch_events(
         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-            return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
+            return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
 
         if MEMGPT_TOOLS_PATH not in sys.path:
             sys.path.append(MEMGPT_TOOLS_PATH)
@@ -201,51 +768,54 @@ def fetch_events(
         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
 
-        # comment out for testing
-        from google_utils import GoogleCalendarUtils
+        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
 
         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
 
-        events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, page_token, time_max)
+        event_data = {}
+        if title:
+            event_data['summary'] = title
 
-        if not events_data.get('items', []):
-            return "No upcoming events found."
+        if not local_timezone:
+            local_timezone = UserDataManager.get_user_timezone(user_id)
+        elif not is_valid_timezone(local_timezone):
+            return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
 
-        event_list = []
-        total_chars = 0
+        if start:
+            start_time = parse_datetime(start, local_timezone)
+            event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
+        if end:
+            end_time = parse_datetime(end, local_timezone)
+            event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
 
-        for event in events_data['items']:
-            event_summary = {
-                'title': event['summary'],
-                'start': event['start'].get('dateTime', event['start'].get('date')),
-                'end': event['end'].get('dateTime', event['end'].get('date')),
-                'id': event['id']
+        
+        if description:
+            event_data['description'] = description
+        if location:
+            event_data['location'] = location
+        if reminders:
+            reminder_minutes = [int(m.strip()) for m in reminders.split(',')]
+            event_data['reminders'] = {
+                'useDefault': False,
+                'overrides': [{'method': 'popup', 'minutes': minutes} for minutes in reminder_minutes]
             }
-            event_json = json.dumps(event_summary)
-            if total_chars + len(event_json) + 2 > char_limit:  # +2 for the comma and space
-                break
-            event_list.append(event_summary)
-            total_chars += len(event_json) + 2  # +2 for the comma and space
+        if recurrence:
+            if not recurrence.startswith('RRULE:'):
+                recurrence = f"RRULE:{recurrence}"
+            event_data['recurrence'] = [recurrence]
 
-        result = {
-            "success": True,
-            "events": event_list,
-            "nextPageToken": events_data.get('nextPageToken'),
-            "prevPageToken": events_data.get('prevPageToken')
-        }
+        result = calendar_utils.update_calendar_event(user_id, event_id, event_data, update_series, local_timezone)
 
-        result_str = json.dumps(result)
-        if len(result_str) > char_limit:
-            result_str = result_str[:char_limit] + "..."
-
-        return result_str
+        if result.get("success", False):
+            return json.dumps({"success": True, "event_id": result['event']['id'], "message": "Event updated successfully"})
+        else:
+            return json.dumps({"success": False, "message": result.get('message', 'Unknown error')})
 
     except Exception as e:
-        logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
-        return f"Error fetching events: {str(e)}"
+        logger.error(f"Error in update_event: {str(e)}", exc_info=True)
+        return json.dumps({"success": False, "message": f"Error updating event: {str(e)}"})
+    
 
-# Example usage:
-# fetch_events(self, user_id='some_user_id', max_results=10, char_limit=3000)
 
 def delete_event(
     self: Agent,
@@ -334,148 +904,6 @@ def delete_event(
     except Exception as e:
         logger.error(f"Error in delete_event: {str(e)}", exc_info=True)
         return f"Error in delete_event function: {str(e)}"
-
-def update_event(
-    self: Agent,
-    user_id: str,
-    event_id: str,
-    title: Optional[str] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    description: Optional[str] = None,
-    location: Optional[str] = None,
-    reminders: Optional[str] = None,
-    recurrence: Optional[str] = None,
-    update_series: bool = False
-) -> dict:
-    """
-    Update an existing event in the user's Google Calendar.
-
-    Args:
-        self (Agent): The agent instance calling the tool.
-        user_id (str): The unique identifier for the user.
-        event_id (str): The unique identifier for the event to be updated.
-        title (Optional[str]): The new title for the event. If None, the title remains unchanged.
-        start (Optional[str]): The new start time in ISO 8601 format. If None, the start time remains unchanged.
-        end (Optional[str]): The new end time in ISO 8601 format. If None, the end time remains unchanged.
-        description (Optional[str]): The new description for the event. If None, the description remains unchanged.
-        location (Optional[str]): The new location for the event. If None, the location remains unchanged.
-        reminders (Optional[str]): New reminders as a comma-separated string of minutes (e.g., "10,30,60"). If None, reminders remain unchanged.
-        recurrence (Optional[str]): New recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU"). If None, recurrence remains unchanged.
-        update_series (bool): If True, update the entire event series if the event is part of a recurring series.
-
-    Returns:
-        str: A message indicating success or failure of the event update.
-
-    Examples:
-        1. Update the title and description of a one-time event:
-            update_event(
-                self,
-                user_id='user123',
-                event_id='event123',
-                title='Doctor Appointment - Updated',
-                description='Annual check-up with Dr. Smith.'
-            )
-
-        2. Update the time of a recurring event:
-            update_event(
-                self,
-                user_id='user123',
-                event_id='event123',
-                start='2024-08-01T07:30:00',
-                end='2024-08-01T08:30:00',
-                update_series=True
-            )
-
-        3. Add a recurrence rule to an existing event:
-            update_event(
-                self,
-                user_id='user123',
-                event_id='event123',
-                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR'
-            )
-
-        4. Add a day to an existing recurrence rule:
-            update_event(
-                self,
-                user_id='user123',
-                event_id='event123',
-                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR,SU'
-            )
-
-        5. Change a recurrence rule to a specific day and time:
-            update_event(
-                self,
-                user_id='user123',
-                event_id='event123',
-                start='2024-08-02T07:00:00',
-                end='2024-08-02T08:00:00',
-                recurrence='RRULE:FREQ=WEEKLY;BYDAY=FR'
-            )
-    """
-    import logging
-    import os
-    import sys
-    from dotenv import load_dotenv
-
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-
-    try:
-        load_dotenv()
-        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-            return {"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"}
-
-        logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
-        logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
-
-        if MEMGPT_TOOLS_PATH not in sys.path:
-            sys.path.append(MEMGPT_TOOLS_PATH)
-
-        GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-        GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-        # Temporarily disable for unit tests
-        from google_utils import GoogleCalendarUtils
-
-        calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-        event_data = {}
-        if title:
-            event_data['summary'] = title
-        if start:
-            event_data['start'] = {'dateTime': start, 'timeZone': 'America/Los_Angeles'}
-        if end:
-            event_data['end'] = {'dateTime': end, 'timeZone': 'America/Los_Angeles'}
-        if description:
-            event_data['description'] = description
-        if location:
-            event_data['location'] = location
-        if reminders:
-            reminder_minutes = [int(m.strip()) for m in reminders.split(',')]
-            event_data['reminders'] = {
-                'useDefault': False,
-                'overrides': [{'method': 'popup', 'minutes': minutes} for minutes in reminder_minutes]
-            }
-        if recurrence:
-            if recurrence.lower() in ['daily', 'weekly', 'monthly', 'yearly']:
-                recurrence = f"RRULE:FREQ={recurrence.upper()}"
-            elif not recurrence.startswith("RRULE:"):
-                recurrence = "RRULE:" + recurrence
-            event_data['recurrence'] = [recurrence]
-
-        result = calendar_utils.update_calendar_event(user_id, event_id, event_data, update_series)
-
-        if result.get("success", False):
-            return {"success": True, "event_id": result['event']['id'], "message": "Event updated successfully"}
-        else:
-            return {"success": False, "message": result.get('message', 'Unknown error')}
-
-    except Exception as e:
-        logger.error(f"Error in update_event: {str(e)}", exc_info=True)
-        return {"success": False, "message": f"Error updating event: {str(e)}"}
 
 def send_email(
     self: Agent,

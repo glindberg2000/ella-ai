@@ -166,7 +166,7 @@ async def oauth_callback(
     conn = create_connection()
     create_table(conn)
 
-  # Retrieve user data including the new fields
+    # Retrieve user data including the new fields
     try:
         user_data = get_user_data_by_field(conn, 'auth0_user_id', auth0_user_id)
         if user_data:
@@ -177,6 +177,7 @@ async def oauth_callback(
             default_agent_key = user_data.get('default_agent_key', None)
             vapi_assistant_id = user_data.get('vapi_assistant_id', None)
             calendar_id = user_data.get('calendar_id', None)
+            local_timezone = user_data.get('local_timezone', 'America/Los_Angeles')  # Add this line
         else:
             # Handle the case where no data is found
             print("No user data found for the provided ID")
@@ -187,11 +188,19 @@ async def oauth_callback(
             default_agent_key = None
             vapi_assistant_id = None
             calendar_id = None
-
-        logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: MemGPT User ID = {memgpt_user_id}, API Key = {memgpt_user_api_key}, Email = {email}, Phone = {phone}, Default Agent Key = {default_agent_key}, VAPI Assistant ID = {vapi_assistant_id}, Calendar ID = {calendar_id}")
+            local_timezone = 'America/Los_Angeles'  # Add this line, using default value
+        
+        logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: "
+                    f"MemGPT User ID = {memgpt_user_id}, "
+                    f"API Key = {memgpt_user_api_key}, "
+                    f"Email = {email}, "
+                    f"Phone = {phone}, "
+                    f"Default Agent Key = {default_agent_key}, "
+                    f"VAPI Assistant ID = {vapi_assistant_id}, "
+                    f"Calendar ID = {calendar_id}, "
+                    f"Local Timezone = {local_timezone}")  # Add this line
     except Exception as e:
         logging.error(f"Failed to retrieve user data for Auth0 user ID {auth0_user_id}: {e}")
-
 
     # MemGPT and VAPI Assistant Setup
     if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id or not default_agent_key:
@@ -250,8 +259,8 @@ async def oauth_callback(
                     f"Roles: {roles_str}, Email: {email}, Phone: {phone}, "
                     f"Name: {user_name}, MemGPT User ID: {memgpt_user_id}, "
                     f"MemGPT API Key: {memgpt_user_api_key}, Default Agent Key: {default_agent_key}, "
-                    f"VAPI Assistant ID: {vapi_assistant_id}")
-
+                    f"VAPI Assistant ID: {vapi_assistant_id}, Local Timezone: {local_timezone}")
+        
         # Upsert the updated user data into the database
         upsert_user(
             conn,
@@ -265,12 +274,12 @@ async def oauth_callback(
             memgpt_user_api_key=memgpt_user_api_key,
             default_agent_key=default_agent_key,
             vapi_assistant_id=vapi_assistant_id,
-            calendar_id=calendar_id
+            calendar_id=calendar_id,
+            local_timezone=local_timezone  # Add this line
         )
         logging.info("Upsert operation completed successfully.")
-
     except Exception as e:
-            logging.error(f"Database error during upsert: {e}")
+        logging.error(f"Database error during upsert: {e}")
     finally:
         conn.close()
         logging.info("Database connection closed.")
@@ -287,11 +296,11 @@ async def oauth_callback(
                 "memgpt_user_api_key": str(memgpt_user_api_key),
                 "default_agent_key": str(default_agent_key),
                 "vapi_assistant_id": str(vapi_assistant_id),
-                "phone": phone,  # Added phone to metadata if you want to include it
-                "calendar_id": calendar_id  # Added calendar_id to metadata if you want to include it"
+                "phone": phone,
+                "calendar_id": calendar_id,
+                "local_timezone": local_timezone  # Add this line
             }
         )
-
         return custom_user
 
 

@@ -16,10 +16,9 @@ import json
 from ella_dbo.db_manager import (
     create_connection,
     get_user_data_by_field,
-    get_all_user_data_by_memgpt_id,
     close_connection
 )
-from ella_memgpt.tools.google_utils import GoogleCalendarUtils
+from ella_memgpt.tools.google_utils import GoogleCalendarUtils, UserDataManager
 
 # Setup environment
 setup_env()
@@ -75,15 +74,15 @@ def convert_to_local_time(utc_time_str, timezone='America/Los_Angeles'):
     local_time = utc_time.astimezone(local_tz)
     return local_time
 
-async def fetch_upcoming_events_for_user(user_id: str, memgpt_user_api_key: str) -> dict:
+async def fetch_upcoming_events_for_user(user_id: str, memgpt_user_api_key: str, user_timezone: str) -> dict:
     """
     Fetch upcoming events from Google Calendar for a specific user.
     """
     calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GMAIL_TOKEN_PATH)
-    time_min = datetime.utcnow().replace(tzinfo=pytz.utc).isoformat()
-    time_max = (datetime.utcnow().replace(tzinfo=pytz.utc) + timedelta(days=1)).isoformat()
+    time_min = datetime.now(pytz.timezone(user_timezone)).isoformat()
+    time_max = (datetime.now(pytz.timezone(user_timezone)) + timedelta(days=1)).isoformat()
     logger.info(f"Fetching events for user {user_id} between {time_min} and {time_max}")
-    events = calendar_utils.fetch_upcoming_events(user_id, max_results=10, time_min=time_min, time_max=time_max)
+    events = calendar_utils.fetch_upcoming_events(user_id, max_results=10, time_min=time_min, time_max=time_max, user_timezone=user_timezone)
     logger.info(f"Fetched events for user {user_id}: {events}")
     return events
 
@@ -135,15 +134,17 @@ async def poll_calendar_for_events() -> None:
             active_users = cur.fetchall()
             for user in active_users:
                 memgpt_user_id = user[0]
-                user_data = get_all_user_data_by_memgpt_id(conn, memgpt_user_id)
+                user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
                 if user_data:
-                    memgpt_user_api_key, default_agent_key = user_data[1], user_data[4]
+                    memgpt_user_api_key = user_data.get('memgpt_user_api_key')
+                    default_agent_key = user_data.get('default_agent_key')
+                    user_timezone = user_data.get('local_timezone', 'America/Los_Angeles')
                     events = await fetch_upcoming_events_for_user(memgpt_user_id, memgpt_user_api_key)
-                    now = datetime.utcnow().replace(tzinfo=pytz.utc)
+                    now = datetime.now(pytz.timezone(user_timezone))
                     events_within_alert = []
                     for event in events.get('items', []):
                         try:
-                            start_time = convert_to_local_time(event['start']['dateTime'])
+                            start_time = pytz.timezone(user_timezone).localize(datetime.fromisoformat(event['start']['dateTime']))
                             alert_time = None
                             if event['reminders'].get('useDefault'):
                                 alert_time = start_time - timedelta(minutes=30)  # Default alert 30 minutes before
@@ -153,7 +154,7 @@ async def poll_calendar_for_events() -> None:
                                         alert_time = start_time - timedelta(minutes=reminder['minutes'])
                                         break
 
-                            time_until_event = start_time - now.astimezone(pytz.timezone('America/Los_Angeles'))
+                            time_until_event = start_time - now
 
                             logger.info(
                                 f"Event: {event['summary']}, Start time: {start_time}, "

@@ -7,7 +7,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import Optional, Dict, List, Union
-import datetime
+import pytz
+from datetime import datetime, timezone
 
 # Add the project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -16,23 +17,58 @@ if project_root not in sys.path:
 
 logger = logging.getLogger(__name__)
 
+
 class UserDataManager:
     @staticmethod
-    def get_user_email(memgpt_user_id: str) -> Optional[str]:
-        from ella_dbo.db_manager import create_connection, get_user_data_by_field, close_connection
+    def get_user_timezone(memgpt_user_id: str) -> str:
+        """
+        Retrieve the timezone for a given user.
+        
+        Args:
+            memgpt_user_id (str): The MemGPT user ID.
+        
+        Returns:
+            str: The user's timezone if found, 'America/Los_Angeles' as default otherwise.
+        """
+        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
         conn = create_connection()
         try:
+            logging.info(f"Attempting to retrieve timezone for user_id: {memgpt_user_id}")
             user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-            logger.debug(f"User data retrieved: {user_data}")
-            if user_data is None:
-                logger.warning(f"No user data found for user_id: {memgpt_user_id}")
-                return None
-            email = user_data.get('email')
-            if email is None:
-                logger.warning(f"No email found for user_id: {memgpt_user_id}")
-            return email
+            if user_data and 'local_timezone' in user_data:
+                return user_data['local_timezone']
+            logging.warning(f"No timezone found for user {memgpt_user_id}. Using default: America/Los_Angeles")
+            return 'America/Los_Angeles'
         except Exception as e:
-            logger.error(f"Error retrieving user email: {str(e)}", exc_info=True)
+            logging.error(f"Error retrieving user timezone: {str(e)}", exc_info=True)
+            return 'America/Los_Angeles'
+        finally:
+            close_connection(conn)
+
+    @staticmethod
+    def get_user_email(memgpt_user_id: str) -> Optional[str]:
+        """
+        Retrieve the email for a given user.
+        
+        Args:
+            memgpt_user_id (str): The MemGPT user ID.
+        
+        Returns:
+            Optional[str]: The user's email if found, None otherwise.
+        """
+        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
+        conn = create_connection()
+        try:
+            logging.info(f"Attempting to retrieve email for user_id: {memgpt_user_id}")
+            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
+            if user_data and 'email' in user_data:
+                return user_data['email']
+            logging.warning(f"No email found for user {memgpt_user_id} in user_data: {user_data}")
+            default_email = "default@example.com"
+            logging.warning(f"Using default email {default_email} for user_id: {memgpt_user_id}")
+            return default_email
+        except Exception as e:
+            logging.error(f"Error retrieving user email: {str(e)}", exc_info=True)
             return None
         finally:
             close_connection(conn)
@@ -111,79 +147,114 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error in get_or_create_user_calendar: {str(e)}", exc_info=True)
             return None
 
-    def create_calendar_event(self, calendar_id: str, event_data: dict) -> dict:
+    def create_calendar_event(self, user_id: str, event_data: dict, local_timezone: str) -> dict:
         try:
+            calendar_id = self.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return {"success": False, "message": "Unable to get or create user calendar"}
+
+            # Convert event times to user's timezone
+            start_time = self._localize_time(event_data['start']['dateTime'], local_timezone)
+            end_time = self._localize_time(event_data['end']['dateTime'], local_timezone)
+
+            event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
+            event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
+
             event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
             return {"success": True, "id": event['id'], "htmlLink": event.get('htmlLink')}
         except HttpError as e:
-            logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
+            logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
 
-    # def fetch_upcoming_events(self, user_id: str, max_results: int = 10, time_min: Optional[str] = None) -> List[Dict]:
-    #     try:
-    #         calendar_id = self.get_or_create_user_calendar(user_id)
-    #         if not calendar_id:
-    #             logger.error(f"Unable to get calendar for user_id: {user_id}")
-    #             return []
 
-    #         if not time_min:
-    #             time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+def fetch_upcoming_events(
+        self, 
+        user_id: str, 
+        max_results: int = 10, 
+        time_min: Optional[str] = None,
+        time_max: Optional[str] = None,
+        local_timezone: str = 'America/Los_Angeles'
+    ) -> dict:
+    try:
+        calendar_id = self.get_or_create_user_calendar(user_id)
+        logging.debug(f"Calendar ID for user {user_id}: {calendar_id}")
+        
+        if not calendar_id:
+            logging.error(f"Unable to get calendar for user_id: {user_id}")
+            return {"items": []}
 
-    #         events_result = self.service.events().list(
-    #             calendarId=calendar_id,
-    #             timeMin=time_min,
-    #             maxResults=max_results,
-    #             singleEvents=True,
-    #             orderBy='startTime'
-    #         ).execute()
+        if not time_min:
+            time_min = datetime.now(pytz.timezone(local_timezone)).isoformat()
+        if not time_max:
+            time_max = (datetime.now(pytz.timezone(local_timezone)) + timedelta(days=1)).isoformat()
 
-    #         events = events_result.get('items', [])
-    #         return events
-    #     except Exception as e:
-    #         logger.error(f"Error fetching events: {str(e)}", exc_info=True)
-    #         return []
+        params = {
+            'calendarId': calendar_id,
+            'timeMin': time_min,
+            'timeMax': time_max,
+            'maxResults': max_results,
+            'singleEvents': True,
+            'orderBy': 'startTime',
+            'timeZone': local_timezone
+        }
 
-    def fetch_upcoming_events(
-            self, 
-            user_id: str, 
-            max_results: int = 10, 
-            time_min: Optional[str] = None,
-            page_token: Optional[str] = None,
-            time_max: Optional[str] = None  # Add this parameter
-        ) -> dict:
-            try:
-                calendar_id = self.get_or_create_user_calendar(user_id)
-                if not calendar_id:
-                    logger.error(f"Unable to get calendar for user_id: {user_id}")
-                    return {"items": [], "nextPageToken": None, "prevPageToken": None}
+        logging.debug(f"Calendar API request params: {params}")
 
-                if not time_min:
-                    time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+        events_result = self.service.events().list(**params).execute()
 
-                # Prepare parameters for the API call
-                params = {
-                    'calendarId': calendar_id,
-                    'timeMin': time_min,
-                    'maxResults': max_results,
-                    'singleEvents': True,
-                    'orderBy': 'startTime',
-                    'pageToken': page_token
-                }
+        logging.debug(f"Raw Calendar API response: {events_result}")
 
-                # Only add timeMax if it's provided
-                if time_max:
-                    params['timeMax'] = time_max
+        events = events_result.get('items', [])
+        
+        logging.debug(f"Number of events fetched: {len(events)}")
 
-                events_result = self.service.events().list(**params).execute()
+        # Convert event times to user's timezone
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            end = event['end'].get('dateTime', event['end'].get('date'))
+            event['start']['dateTime'] = self._localize_time(start, local_timezone).isoformat()
+            event['end']['dateTime'] = self._localize_time(end, local_timezone).isoformat()
 
-                events = events_result.get('items', [])
-                next_page_token = events_result.get('nextPageToken')
-                prev_page_token = events_result.get('prevPageToken')
-                
-                return {"items": events, "nextPageToken": next_page_token, "prevPageToken": prev_page_token}
-            except Exception as e:
-                logger.error(f"Error fetching events: {str(e)}", exc_info=True)
-                return {"items": [], "nextPageToken": None, "prevPageToken": None}
+        return {"items": events}
+    except Exception as e:
+        logging.error(f"Error fetching events: {str(e)}", exc_info=True)
+        return {"items": []}
+
+
+    def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False, local_timezone: str = 'America/Los_Angeles') -> dict:
+        try:
+            calendar_id = self.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return {"success": False, "message": "Unable to get or create user calendar"}
+
+            event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+            # Update event times if provided
+            if 'start' in event_data:
+                start_time = self._localize_time(event_data['start']['dateTime'], local_timezone)
+                event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
+            if 'end' in event_data:
+                end_time = self._localize_time(event_data['end']['dateTime'], local_timezone)
+                event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
+
+            if update_series and 'recurringEventId' in event:
+                series_id = event['recurringEventId']
+                updated_event = self.service.events().patch(calendarId=calendar_id, eventId=series_id, body=event_data).execute()
+                return {"success": True, "message": f"Event series updated successfully. ID: {series_id}", "event": updated_event}
+            else:
+                updated_event = self.service.events().patch(calendarId=calendar_id, eventId=event_id, body=event_data).execute()
+                return {"success": True, "message": "Event updated successfully", "event": updated_event}
+        except HttpError as e:
+            logging.error(f"Error in update_calendar_event: {str(e)}", exc_info=True)
+            return {"success": False, "message": f"Error updating event: {str(e)}"}
+
+    def _localize_time(self, time_str: str, timezone: str) -> datetime:
+        """Convert a time string to a timezone-aware datetime object."""
+        dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=pytz.UTC)
+        return dt.astimezone(pytz.timezone(timezone))
+
 
     def delete_calendar_event(self, user_id: str, event_id: str, delete_series: bool = False) -> dict:
         try:
@@ -209,24 +280,6 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error in delete_calendar_event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error deleting event: {str(e)}"}
 
-    def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False) -> dict:
-        try:
-            calendar_id = self.get_or_create_user_calendar(user_id)
-            if not calendar_id:
-                return {"success": False, "message": "Unable to get or create user calendar"}
-
-            event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-
-            if update_series and 'recurringEventId' in event:
-                series_id = event['recurringEventId']
-                updated_event = self.service.events().patch(calendarId=calendar_id, eventId=series_id, body=event_data).execute()
-                return {"success": True, "message": f"Event series updated successfully. ID: {series_id}", "event": updated_event}
-            else:
-                updated_event = self.service.events().patch(calendarId=calendar_id, eventId=event_id, body=event_data).execute()
-                return {"success": True, "message": "Event updated successfully", "event": updated_event}
-        except HttpError as e:
-            logger.error(f"Error in update_calendar_event: {str(e)}", exc_info=True)
-            return {"success": False, "message": f"Error updating event: {str(e)}"}
 
 
 class GoogleEmailUtils(GoogleAuthBase):
@@ -271,3 +324,19 @@ class GoogleEmailUtils(GoogleAuthBase):
 
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
         return {'raw': raw_message}
+    
+
+
+
+def is_valid_timezone(timezone_str):
+    try:
+        pytz.timezone(timezone_str)
+        return True
+    except pytz.exceptions.UnknownTimeZoneError:
+        return False
+
+def parse_datetime(dt_str, timezone):
+    dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+    if dt.tzinfo is None:
+        return pytz.timezone(timezone).localize(dt)
+    return dt.astimezone(pytz.timezone(timezone))
