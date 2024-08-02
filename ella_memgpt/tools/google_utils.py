@@ -73,6 +73,33 @@ class UserDataManager:
         finally:
             close_connection(conn)
 
+    @staticmethod
+    def get_user_reminder_prefs(memgpt_user_id: str) -> Dict[str, Union[int, str]]:
+        """
+        Retrieve the default reminder preferences for a given user.
+        
+        Args:
+            memgpt_user_id (str): The MemGPT user ID.
+        
+        Returns:
+            Dict[str, Union[int, str]]: A dictionary containing 'default_reminder_time' and 'reminder_method'.
+        """
+        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
+        conn = create_connection()
+        try:
+            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
+            if user_data:
+                return {
+                    'default_reminder_time': user_data.get('default_reminder_time', 15),
+                    'reminder_method': user_data.get('reminder_method', 'email,sms')
+                }
+            return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
+        except Exception as e:
+            logging.error(f"Error retrieving user reminder preferences: {str(e)}", exc_info=True)
+            return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
+        finally:
+            close_connection(conn)
+
 class GoogleAuthBase:
     def __init__(self, token_path: str, credentials_path: str, scopes: list):
         self.token_path = token_path
@@ -159,6 +186,10 @@ class GoogleCalendarUtils(GoogleAuthBase):
 
             event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
             event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
+
+            # Ensure reminders are set
+            if 'reminders' not in event_data:
+                event_data['reminders'] = {'useDefault': True}
 
             event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
             return {"success": True, "id": event['id'], "htmlLink": event.get('htmlLink')}

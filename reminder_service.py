@@ -79,32 +79,30 @@ async def fetch_upcoming_events_for_user(user_id: str, memgpt_user_api_key: str,
     return events
 
 async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: str, user_timezone: str) -> None:
-    """
-    Send an alert to the LLM about an upcoming event.
-    """
     local_start_time = convert_to_local_time(event['start']['dateTime'], user_timezone)
     local_end_time = convert_to_local_time(event['end']['dateTime'], user_timezone)
-    alert_type = 'send_email'
-    if event['reminders'].get('useDefault'):
-        alert_type = 'send_email'
-    else:
-        for reminder in event['reminders'].get('overrides', []):
-            if reminder['method'] == 'email':
-                alert_type = 'send_email'
-            elif reminder['method'] == 'sms':
-                alert_type = 'send_text'
-            elif reminder['method'] == 'popup':
-                alert_type = 'send_voice_message'
+    
+    event_info = {
+        "event_id": event['id'],
+        "summary": event['summary'],
+        "start": local_start_time.strftime('%Y-%m-%d %H:%M:%S %Z'),
+        "end": local_end_time.strftime('%Y-%m-%d %H:%M:%S %Z'),
+        "description": event.get('description', 'No description'),
+    }
+    
+    alert_type = event.get('alert_type', 'send_email')  # Default to email if not specified
 
-    formatted_message = (
-        f"[EVENT REMINDER] "
-        f"[event_id: {event['id']}] "
-        f"[summary: {event['summary']}] "
-        f"[start: {local_start_time.strftime('%Y-%m-%d %H:%M:%S %Z')}] "
-        f"[end: {local_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}] "
-        f"[message: {event.get('description', 'No description')}] "
-        f"[alert_type: {alert_type}] "
-    )
+    formatted_message = f"""
+    [SYSTEM] Event reminder alert received. Please process the following event information:
+    {json.dumps(event_info, indent=2)}
+
+    [INSTRUCTIONS] 
+    1. Analyze the event information.
+    2. Compose a concise and relevant reminder message for the user.
+    3. Use the '{alert_type}' function to send the reminder to the user.
+    4. The reminder should be brief but include key details like event title, time, and any crucial information from the description.
+    5. Do not include any explanations or additional dialogue in your response. Only use the specified function to send the reminder.
+    """
 
     client = RESTClient(base_url=base_url, token=memgpt_user_api_key)
     try:
@@ -138,18 +136,63 @@ async def poll_calendar_for_events() -> None:
                     
                     events = await fetch_upcoming_events_for_user(memgpt_user_id, memgpt_user_api_key, user_timezone)
                     now = datetime.now(pytz.timezone(user_timezone))
+                    
+                    # Print next upcoming event
+                    if events.get('items'):
+                        next_event = min(events['items'], key=lambda e: parse_datetime(e['start']['dateTime'], user_timezone))
+                        next_event_start = parse_datetime(next_event['start']['dateTime'], user_timezone)
+                        time_until_event = next_event_start - now
+                        minutes_until_event = time_until_event.total_seconds() / 60
+
+                        logger.info(f"Next upcoming event for user {memgpt_user_id}:")
+                        logger.info(f"  Title: {next_event['summary']}")
+                        logger.info(f"  Start time: {next_event_start.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                        logger.info(f"  Minutes until event: {minutes_until_event:.2f}")
+
+                        # Calculate minutes until alert
+                        alert_time = None
+                        if next_event['reminders'].get('useDefault', True):
+                            user_prefs = UserDataManager.get_user_reminder_prefs(memgpt_user_id)
+                            default_reminder_time = user_prefs['default_reminder_time']
+                            alert_time = next_event_start - timedelta(minutes=default_reminder_time)
+                        else:
+                            for reminder in next_event['reminders'].get('overrides', []):
+                                if reminder['method'] in ['email', 'sms', 'popup', 'voice']:
+                                    alert_time = next_event_start - timedelta(minutes=reminder['minutes'])
+                                    break
+
+                        if alert_time:
+                            minutes_until_alert = (alert_time - now).total_seconds() / 60
+                            logger.info(f"  Minutes until alert: {minutes_until_alert:.2f}")
+                        else:
+                            logger.info("  No alert set for this event")
+                    else:
+                        logger.info(f"No upcoming events for user {memgpt_user_id}")
+
                     events_within_alert = []
                     for event in events.get('items', []):
                         try:
                             start_time = parse_datetime(event['start']['dateTime'], user_timezone)
                             alert_time = None
-                            if event['reminders'].get('useDefault'):
-                                alert_time = start_time - timedelta(minutes=30)  # Default alert 30 minutes before
+                            if event['reminders'].get('useDefault', True):
+                                # Fetch user preferences
+                                user_prefs = UserDataManager.get_user_reminder_prefs(memgpt_user_id)
+                                default_reminder_time = user_prefs['default_reminder_time']
+                                default_methods = user_prefs['reminder_method'].split(',')
+                                
+                                alert_time = start_time - timedelta(minutes=default_reminder_time)
+                                alert_type = default_methods[0] if default_methods else 'send_email'
                             else:
                                 for reminder in event['reminders'].get('overrides', []):
-                                    if reminder['method'] in ['email', 'sms', 'popup']:
+                                    if reminder['method'] in ['email', 'sms', 'popup', 'voice']:
                                         alert_time = start_time - timedelta(minutes=reminder['minutes'])
+                                        alert_type = f"send_{reminder['method']}"
                                         break
+                                
+                            if not alert_time:
+                                # Final fallback
+                                alert_time = start_time - timedelta(minutes=30)
+                                alert_type = 'send_email'
 
                             time_until_event = start_time - now
 
