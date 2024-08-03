@@ -100,6 +100,25 @@ class UserDataManager:
         finally:
             close_connection(conn)
 
+
+    @staticmethod
+    def get_user_phone(memgpt_user_id: str) -> Optional[str]:
+        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
+        
+        conn = create_connection()
+        try:
+            logging.info(f"Attempting to retrieve phone number for user_id: {memgpt_user_id}")
+            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
+            if user_data and 'phone' in user_data:
+                return user_data['phone']
+            logging.warning(f"No phone number found for user {memgpt_user_id}")
+            return None
+        except Exception as e:
+            logging.error(f"Error retrieving user phone number: {str(e)}", exc_info=True)
+            return None
+        finally:
+            close_connection(conn)
+
 class GoogleAuthBase:
     def __init__(self, token_path: str, credentials_path: str, scopes: list):
         self.token_path = token_path

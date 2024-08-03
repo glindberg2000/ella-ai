@@ -98,10 +98,10 @@ async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: st
 
     [INSTRUCTIONS] 
     1. Analyze the event information.
-    2. Compose a concise and relevant reminder message for the user.
-    3. Use the '{alert_type}' function to send the reminder to the user.
-    4. The reminder should be brief but include key details like event title, time, and any crucial information from the description.
-    5. Do not include any explanations or additional dialogue in your response. Only use the specified function to send the reminder.
+    2. Compose a concise and relevant reminder message for the user. Use an appropriate writing style and length based on the '{alert_type}' function which will be used for delivering the note.
+    3. The reminder should include key details like event title, time, and any crucial information from the description. 
+    4. Use the '{alert_type}' function to send the reminder to the user.
+    5. Only use the specified function to send the reminder.
     """
 
     client = RESTClient(base_url=base_url, token=memgpt_user_api_key)

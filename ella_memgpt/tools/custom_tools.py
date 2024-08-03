@@ -11,6 +11,7 @@ from enum import Enum
 
 # Global imports for testing purposes only. Comment out the internal import versions while testing.
 # from google_utils import GoogleCalendarUtils, UserDataManager, GoogleEmailUtils
+# from twilio.rest import Client
     
 def schedule_event(
     self: Agent,
@@ -277,6 +278,8 @@ def update_event(
     except Exception as e:
         logger.error(f"Error in update_event: {str(e)}", exc_info=True)
         return json.dumps({"success": False, "message": f"Error updating event: {str(e)}"})
+    
+
 def fetch_events(
     self: Agent,
     user_id: str,
@@ -526,7 +529,83 @@ def send_email(
         logger.error(f"Error in send_email: {str(e)}", exc_info=True)
         return f"Error sending email: {str(e)}"
 
+
+def send_sms(
+    self: Agent,
+    user_id: str,
+    body: str,
+    message_id: Optional[str] = None
+) -> str:
+    """
+    Send an SMS message via Twilio using a MemGPT user ID.
+    
+    This function retrieves the user's phone number from the database using the provided MemGPT user ID.
+    If successful, an SMS message is sent using the Twilio API.
+    
+    Args:
+        self (Agent): The agent instance calling the tool.
+        user_id (str): The unique identifier for the user (recipient).
+        body (str): The content of the SMS message.
+        message_id (Optional[str]): An optional message ID for reference (not used in SMS, but included for consistency).
+        
+    Returns:
+        str: A status message indicating success or failure.
+    """
+    import logging
+    import os
+    import sys
+    from dotenv import load_dotenv
+    from typing import Optional
+ 
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        load_dotenv()
+        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_number = os.getenv("TWILIO_FROM_NUMBER")
+
+        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
+            return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
+        
+        logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
+        logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
+        
+        if MEMGPT_TOOLS_PATH not in sys.path:
+            sys.path.append(MEMGPT_TOOLS_PATH)
+        
+        # Now that the path is set up, we can import UserDataManager
+        from google_utils import UserDataManager
+        # Initialize Twilio client
+        from twilio.rest import Client
+        
+        if not account_sid or not auth_token or not from_number:
+            return "Error: Twilio credentials not set in environment variables"
+        
+        client = Client(account_sid, auth_token)
+        
+        # Retrieve recipient's phone number
+        recipient_phone = UserDataManager.get_user_phone(user_id)
+        if not recipient_phone:
+            return "Error: No valid recipient phone number available."
+        
+        message_status = client.messages.create(
+            body=body,
+            from_=from_number,
+            to=recipient_phone
+        )
+        logger.info(f"Message sent to {recipient_phone}: {message_status.sid}")
+        return "Message was successfully sent."
+    except Exception as e:
+        logger.error(f"Message failed to send with error: {str(e)}", exc_info=True)
+        return f"Error: Message failed to send. {str(e)}"
+
+
 # List of all custom tools
-CUSTOM_TOOLS = [schedule_event, update_event, send_email, fetch_events, delete_event]
+CUSTOM_TOOLS = [schedule_event, update_event, fetch_events, delete_event, send_email, send_sms]
 
 

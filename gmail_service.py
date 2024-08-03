@@ -5,18 +5,16 @@ import os
 import asyncio
 import base64
 import re
-from email import message_from_bytes
 from email.utils import parseaddr
 from email.header import decode_header
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from memgpt.client.client import RESTClient
 
 from ella_dbo.db_manager import (
     create_connection,
-    get_user_data_by_email,
+    get_user_data_by_field,
     close_connection
 )
 
@@ -149,7 +147,6 @@ async def poll_gmail_notifications() -> None:
         logger.error(f"Error during Gmail polling: {str(e)}")
         await asyncio.sleep(60)
 
-
 def extract_email_address(from_field: str) -> str:
     """
     Extract the email address from the 'from' field.
@@ -170,10 +167,10 @@ async def read_user_by_email(email: str) -> dict:
     logging.info(f"Attempting to read user by email: {email}")
     conn = await asyncio.to_thread(create_connection)
     try:
-        user_data = await asyncio.to_thread(get_user_data_by_email, conn, email)
+        user_data = await asyncio.to_thread(get_user_data_by_field, conn, "email", email)
         if user_data:
             logging.info(f"User data retrieved successfully: {user_data}")
-            return dict(zip(["memgpt_user_id", "memgpt_user_api_key", "email", "phone", "default_agent_key", "vapi_assistant_id"], user_data))
+            return user_data
         else:
             logging.error("User not found")
             raise HTTPException(status_code=404, detail="User not found")
@@ -202,7 +199,6 @@ async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str,
     except Exception as e:
         logging.error(f"Sending message to MemGPT API failed: {str(e)}")
 
-
 @asynccontextmanager
 async def gmail_app_lifespan(app: FastAPI):
     """
@@ -221,3 +217,12 @@ gmail_app.router.lifespan_context = gmail_app_lifespan
 async def gmail_status():
     return {"status": "running"}
 
+
+# Main function to run the polling task directly
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        await poll_gmail_notifications()
+
+    asyncio.run(main())

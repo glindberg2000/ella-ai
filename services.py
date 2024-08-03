@@ -38,7 +38,7 @@ app.router.lifespan_context = main_lifespan
 
 # Mount the services
 app.mount("/vapi", vapi_app)
-app.mount("/twilio", twilio_app)
+# app.mount("/twilio", twilio_app)
 app.mount("/gmail", gmail_app)
 
 if __name__ == "__main__":

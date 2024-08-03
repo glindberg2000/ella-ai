@@ -1,9 +1,11 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 import sys
 import os
 from dotenv import load_dotenv
-from custom_tools import schedule_event, fetch_events, delete_event, update_event, send_email
+from custom_tools import schedule_event, fetch_events, delete_event, update_event, send_email, send_sms
+
+
 
 class TestCustomTools(unittest.TestCase):
 
@@ -104,6 +106,47 @@ class TestCustomTools(unittest.TestCase):
         result = send_email(agent, 'test_user_id', 'Test Subject', 'Test Body')
 
         self.assertIn('Message was successfully sent. Message ID: test_message_id', result)
+
+    @patch('custom_tools.Client', autospec=True)
+    @patch('custom_tools.UserDataManager.get_user_phone', return_value='+1234567890')
+    def test_send_sms(self, mock_get_user_phone, MockTwilioClient):
+        mock_twilio_client = MockTwilioClient.return_value
+        mock_twilio_client.messages.create.return_value = MagicMock(sid='TEST_MESSAGE_SID')
+
+        agent = MagicMock()
+        result = send_sms(agent, 'test_user_id', 'Test SMS body')
+
+        self.assertIn('Message was successfully sent.', result)
+        mock_get_user_phone.assert_called_once_with('test_user_id')
+        mock_twilio_client.messages.create.assert_called_once_with(
+            body='Test SMS body',
+            from_=ANY,  # We use ANY here because the from_number is set in the environment
+            to='+1234567890'
+        )
+
+    @patch('custom_tools.Client', autospec=True)
+    @patch('custom_tools.UserDataManager.get_user_phone', return_value=None)
+    def test_send_sms_no_phone(self, mock_get_user_phone, MockTwilioClient):
+        agent = MagicMock()
+        result = send_sms(agent, 'test_user_id', 'Test SMS body')
+
+        self.assertEqual(result, "Error: No valid recipient phone number available.")
+        mock_get_user_phone.assert_called_once_with('test_user_id')
+        MockTwilioClient.return_value.messages.create.assert_not_called()
+
+    @patch('custom_tools.Client', autospec=True)
+    @patch('custom_tools.UserDataManager.get_user_phone', return_value='+1234567890')
+    def test_send_sms_twilio_error(self, mock_get_user_phone, MockTwilioClient):
+        mock_twilio_client = MockTwilioClient.return_value
+        mock_twilio_client.messages.create.side_effect = Exception("Twilio error")
+
+        agent = MagicMock()
+        result = send_sms(agent, 'test_user_id', 'Test SMS body')
+
+        self.assertIn("Error: Message failed to send.", result)
+        self.assertIn("Twilio error", result)
+        mock_get_user_phone.assert_called_once_with('test_user_id')
+        mock_twilio_client.messages.create.assert_called_once()
 
 def run_specific_tests(test_functions):
     suite = unittest.TestSuite()
