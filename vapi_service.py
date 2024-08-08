@@ -1,3 +1,6 @@
+#vapi_service.py
+#handles incoming voice service messages, queues for processing by LLM and sends respones 
+
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import StreamingResponse, Response
 import uuid
@@ -6,7 +9,7 @@ import json
 import time
 import os
 from redis.asyncio import Redis
-from redis.exceptions import ResponseError
+from redis.exceptions import ResponseErrorc
 import logging
 from typing import Optional
 import httpx

@@ -1,3 +1,6 @@
+#reminder_service.py
+#polls google calendar for events and sends to LLM for response and dispatch
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from contextlib import asynccontextmanager
 import logging

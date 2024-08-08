@@ -1,8 +1,12 @@
+#gmail_service.py
+#polls for gmail messages and sends to LLM for response
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from contextlib import asynccontextmanager
 import logging
 import os
 import asyncio
+from functools import partial
 import base64
 import re
 from email.utils import parseaddr
@@ -11,6 +15,7 @@ from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from memgpt.client.client import RESTClient
+import aiosqlite
 
 from ella_dbo.db_manager import (
     create_connection,
@@ -79,6 +84,74 @@ def parse_email_message(message: dict) -> dict:
         'body': body
     }
 
+# async def poll_gmail_notifications() -> None:
+#     """
+#     Poll Gmail for new messages and process them.
+#     """
+#     logger.info("Starting Gmail polling task")
+#     creds = None
+#     if os.path.exists(GMAIL_TOKEN_PATH):
+#         try:
+#             creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
+#             logger.info("Successfully loaded credentials from file.")
+#         except Exception as e:
+#             logger.error(f"Error loading credentials: {e}")
+#             return
+#     else:
+#         logger.error(f"Credentials file not found at path: {GMAIL_TOKEN_PATH}")
+#         return
+
+#     if not creds or not creds.valid:
+#         logger.error("Gmail Service: Invalid or missing credentials. Ensure you have a valid token.")
+#         return
+
+#     try:
+#         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+#         user_profile = service.users().getProfile(userId="me").execute()
+#         email_address = user_profile.get("emailAddress")
+#         logger.info(f"Authenticated Gmail account: {email_address}")
+
+#         while True:
+#             try:
+#                 logger.info("Checking for new emails...")
+#                 messages_result = service.users().messages().list(userId="me", q="is:unread", maxResults=25).execute()
+#                 messages = messages_result.get("messages", [])
+#                 for message in messages:
+#                     message_id = message["id"]
+#                     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+#                     parsed_email = parse_email_message(msg)
+
+#                     if parsed_email:
+#                         logger.info(f"New Email - From: {parsed_email['from']}, To: {parsed_email['to']}, "
+#                                     f"Subject: {parsed_email['subject']}, Body: {parsed_email['body'][:100]}...")
+
+#                         # Only process emails not from system accounts
+#                         if not parsed_email['from'].endswith('@google.com'):
+#                             try:
+#                                 from_email = parsed_email['from'].split('<')[-1].split('>')[0]
+#                                 user_data = await read_user_by_email(from_email)
+#                                 if user_data and user_data.get("default_agent_key"):
+#                                     default_agent_key = user_data['default_agent_key']
+#                                     memgpt_user_api_key = user_data['memgpt_user_api_key']
+#                                     await route_reply_to_memgpt_api(parsed_email['body'], parsed_email['subject'],
+#                                                                     message_id, memgpt_user_api_key, default_agent_key)
+#                                 else:
+#                                     logger.warning(f"User not found or default agent key missing for email: {from_email}")
+#                             except Exception as e:
+#                                 logger.error(f"Error processing email: {str(e)}")
+
+#                     # Mark the message as read
+#                     service.users().messages().modify(userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}).execute()
+
+#             except Exception as e:
+#                 logger.error(f"Error during email processing: {str(e)}")
+
+#             logger.info("Finished checking for new emails. Waiting for 60 seconds before the next check.")
+#             await asyncio.sleep(60)
+#     except Exception as e:
+#         logger.error(f"Error during Gmail polling: {str(e)}")
+#         await asyncio.sleep(60)
+
 async def poll_gmail_notifications() -> None:
     """
     Poll Gmail for new messages and process them.
@@ -132,6 +205,8 @@ async def poll_gmail_notifications() -> None:
                                                                     message_id, memgpt_user_api_key, default_agent_key)
                                 else:
                                     logger.warning(f"User not found or default agent key missing for email: {from_email}")
+                            except HTTPException as http_e:
+                                logger.error(f"HTTP error processing email: {str(http_e)}")
                             except Exception as e:
                                 logger.error(f"Error processing email: {str(e)}")
 
@@ -147,6 +222,7 @@ async def poll_gmail_notifications() -> None:
         logger.error(f"Error during Gmail polling: {str(e)}")
         await asyncio.sleep(60)
 
+        
 def extract_email_address(from_field: str) -> str:
     """
     Extract the email address from the 'from' field.
@@ -160,26 +236,39 @@ def extract_email_address(from_field: str) -> str:
 
     return email_address
 
+
 async def read_user_by_email(email: str) -> dict:
     """
-    Read user data by email from the database.
+    Read user data by email from the database in a thread-safe manner.
     """
     logging.info(f"Attempting to read user by email: {email}")
-    conn = await asyncio.to_thread(create_connection)
+    
+    def db_operation():
+        conn = create_connection()
+        try:
+            user_data = get_user_data_by_field(conn, "email", email)
+            if user_data:
+                logging.info(f"User data retrieved successfully: {user_data}")
+                return user_data
+            else:
+                logging.error("User not found")
+                return None
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
+            raise e
+        finally:
+            logging.info("Closing database connection")
+            close_connection(conn)
+
     try:
-        user_data = await asyncio.to_thread(get_user_data_by_field, conn, "email", email)
-        if user_data:
-            logging.info(f"User data retrieved successfully: {user_data}")
-            return user_data
-        else:
-            logging.error("User not found")
+        # Run the database operation in the default thread pool
+        user_data = await asyncio.get_event_loop().run_in_executor(None, db_operation)
+        if user_data is None:
             raise HTTPException(status_code=404, detail="User not found")
+        return user_data
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        raise e
-    finally:
-        logging.info("Closing database connection")
-        await asyncio.to_thread(close_connection, conn)
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str, memgpt_user_api_key: str, agent_key: str) -> None:
     """
@@ -187,7 +276,7 @@ async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str,
     """
     client = RESTClient(base_url=base_url, token=memgpt_user_api_key)
     formatted_message = (
-        f"[EMAIL MESSAGE NOTIFICATION - you MUST use send_email NOT send_message if you want to reply to the thread] "
+        f"[EMAIL MESSAGE NOTIFICATION - you MUST use send_email function call if you want to reply to the thread to the user] "
         f"[message_id: {message_id}] "
         f"[subject: {subject}] "
         f"[message: {message}] "

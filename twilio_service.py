@@ -1,3 +1,7 @@
+#twilio_service.py
+#handles SMS message endpoint, looksup user info by phone number, sends to LLM for response
+
+
 from fastapi import FastAPI, Request, HTTPException, Depends
 from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse
