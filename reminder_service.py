@@ -93,7 +93,9 @@ async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: st
         "description": event.get('description', 'No description'),
     }
     
-    alert_type = event.get('alert_type', 'send_email')  # Default to email if not specified
+    # Determine the alert type based on user preferences
+    user_prefs = UserDataManager.get_user_reminder_prefs(memgpt_user_api_key)
+    alert_type = user_prefs.get('reminder_method', 'send_email').split(',')[0]
 
     formatted_message = f"""
     [SYSTEM] Event reminder alert received. Please process the following event information:
@@ -103,8 +105,9 @@ async def send_alert_to_llm(event: dict, memgpt_user_api_key: str, agent_key: st
     1. Analyze the event information.
     2. Compose a concise and relevant reminder message for the user. Use an appropriate writing style and length based on the '{alert_type}' function which will be used for delivering the note.
     3. The reminder should include key details like event title, time, and any crucial information from the description. 
-    4. Use the '{alert_type}' function to send the reminder to the user.
-    5. Only use the specified function to send the reminder.
+    4. Use the '{alert_type}' function to send the reminder to the user. This may be 'send_email', 'send_sms', or 'send_voice' (voice call).
+    5. If using 'send_voice' function for voice call, ensure the message is conversational and suitable for spoken delivery.
+    6. Only use the specified function to send the reminder.
     """
 
     client = RESTClient(base_url=base_url, token=memgpt_user_api_key)

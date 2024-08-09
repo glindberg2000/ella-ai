@@ -15,6 +15,7 @@ def setup_env():
     # Update or set environment variables
     set_key(env_path, "ELLA_AI_ROOT", project_root)
     set_key(env_path, "MEMGPT_TOOLS_PATH", os.path.join(project_root, "ella_memgpt","tools"))
+    set_key(env_path, "VAPI_TOOLS_PATH", os.path.join(project_root, "ella_vapi"))
     set_key(env_path, "DB_PATH", os.path.join(project_root, "ella_dbo"))
     set_key(env_path, "CREDENTIALS_PATH", os.path.join(project_root, "ella_memgpt","credentials"))
 

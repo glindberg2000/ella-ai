@@ -11,6 +11,7 @@ from googleapiclient.errors import HttpError
 from typing import Optional, Dict, List, Union
 import pytz
 from datetime import datetime, timezone
+import json
 
 # Add the project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -21,6 +22,29 @@ logger = logging.getLogger(__name__)
 
 
 class UserDataManager:
+    @staticmethod
+    def get_user_data(memgpt_user_id: str) -> dict:
+        """
+        Retrieve all data for a given user.
+        
+        Args:
+            memgpt_user_id (str): The MemGPT user ID.
+        
+        Returns:
+            dict: A dictionary containing all user data.
+        """
+        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
+        conn = create_connection()
+        try:
+            logging.info(f"Attempting to retrieve data for user_id: {memgpt_user_id}")
+            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
+            return user_data if user_data else {}
+        except Exception as e:
+            logging.error(f"Error retrieving user data: {str(e)}", exc_info=True)
+            return {}
+        finally:
+            close_connection(conn)
+
     @staticmethod
     def get_user_timezone(memgpt_user_id: str) -> str:
         """
@@ -120,108 +144,6 @@ class UserDataManager:
             return None
         finally:
             close_connection(conn)
-
-# Made Async
-# class UserDataManager:
-#     @staticmethod
-#     async def get_user_timezone(memgpt_user_id: str) -> str:
-#         """
-#         Retrieve the timezone for a given user.
-        
-#         Args:
-#             memgpt_user_id (str): The MemGPT user ID.
-        
-#         Returns:
-#             str: The user's timezone if found, 'America/Los_Angeles' as default otherwise.
-#         """
-#         from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-#         conn = await create_connection()
-#         try:
-#             logging.info(f"Attempting to retrieve timezone for user_id: {memgpt_user_id}")
-#             user_data = await get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-#             if user_data and 'local_timezone' in user_data:
-#                 return user_data['local_timezone']
-#             logging.warning(f"No timezone found for user {memgpt_user_id}. Using default: America/Los_Angeles")
-#             return 'America/Los_Angeles'
-#         except Exception as e:
-#             logging.error(f"Error retrieving user timezone: {str(e)}", exc_info=True)
-#             return 'America/Los_Angeles'
-#         finally:
-#             await close_connection(conn)
-
-#     @staticmethod
-#     async def get_user_email(memgpt_user_id: str) -> Optional[str]:
-#         """
-#         Retrieve the email for a given user.
-        
-#         Args:
-#             memgpt_user_id (str): The MemGPT user ID.
-        
-#         Returns:
-#             Optional[str]: The user's email if found, None otherwise.
-#         """
-#         from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-#         conn = await create_connection()
-#         try:
-#             logging.info(f"Attempting to retrieve email for user_id: {memgpt_user_id}")
-#             user_data = await get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-#             if user_data and 'email' in user_data:
-#                 return user_data['email']
-#             logging.warning(f"No email found for user {memgpt_user_id} in user_data: {user_data}")
-#             default_email = "default@example.com"
-#             logging.warning(f"Using default email {default_email} for user_id: {memgpt_user_id}")
-#             return default_email
-#         except Exception as e:
-#             logging.error(f"Error retrieving user email: {str(e)}", exc_info=True)
-#             return None
-#         finally:
-#             await close_connection(conn)
-
-#     @staticmethod
-#     async def get_user_reminder_prefs(memgpt_user_id: str) -> Dict[str, Union[int, str]]:
-#         """
-#         Retrieve the default reminder preferences for a given user.
-        
-#         Args:
-#             memgpt_user_id (str): The MemGPT user ID.
-        
-#         Returns:
-#             Dict[str, Union[int, str]]: A dictionary containing 'default_reminder_time' and 'reminder_method'.
-#         """
-#         from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-#         conn = await create_connection()
-#         try:
-#             user_data = await get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-#             if user_data:
-#                 return {
-#                     'default_reminder_time': user_data.get('default_reminder_time', 15),
-#                     'reminder_method': user_data.get('reminder_method', 'email,sms')
-#                 }
-#             return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
-#         except Exception as e:
-#             logging.error(f"Error retrieving user reminder preferences: {str(e)}", exc_info=True)
-#             return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
-#         finally:
-#             await close_connection(conn)
-
-#     @staticmethod
-#     async def get_user_phone(memgpt_user_id: str) -> Optional[str]:
-#         from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-        
-#         conn = await create_connection()
-#         try:
-#             logging.info(f"Attempting to retrieve phone number for user_id: {memgpt_user_id}")
-#             user_data = await get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-#             if user_data and 'phone' in user_data:
-#                 return user_data['phone']
-#             logging.warning(f"No phone number found for user {memgpt_user_id}")
-#             return None
-#         except Exception as e:
-#             logging.error(f"Error retrieving user phone number: {str(e)}", exc_info=True)
-#             return None
-#         finally:
-#             await close_connection(conn)
-
           
 class GoogleAuthBase:
     def __init__(self, token_path: str, credentials_path: str, scopes: list):
@@ -314,12 +236,15 @@ class GoogleCalendarUtils(GoogleAuthBase):
             if 'reminders' not in event_data:
                 event_data['reminders'] = {'useDefault': True}
 
+            # Log the event data being sent
+            logging.info(f"Sending event data: {json.dumps(event_data, indent=2)}")
+
             event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
             return {"success": True, "id": event['id'], "htmlLink": event.get('htmlLink')}
         except HttpError as e:
             logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
-
+        
     def fetch_upcoming_events(
         self, 
         user_id: str, 

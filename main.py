@@ -233,14 +233,18 @@ async def oauth_callback(
 
 
         if not vapi_assistant_id:
+                # Set assistant ID to the default one from environment
+            vapi_assistant_id = os.getenv('VAPI_DEFAULT_ASSISTANT_ID')
+            
+            logging.info(f"Using default VAPI Assistant ID: {vapi_assistant_id}")
             # Create VAPI Assistant using the VAPIClient and a preset template
-            vapi_client = VAPIClient()
-            preset_name = 'asteria'  # Example preset name
-            customizations = {"serverUrlSecret": str(memgpt_user_api_key)+':'+str(default_agent_key)}
-            vapi_assistant_response = await vapi_client.create_assistant(preset_name, customizations)
-            vapi_assistant_id = vapi_assistant_response.get('id')  # Extract the 'id' from the response
-            await vapi_client.close()
-            logging.info(f"VAPI Assistant created with ID: {vapi_assistant_id}")
+            # vapi_client = VAPIClient()
+            # preset_name = 'asteria'  # Example preset name
+            # customizations = {"serverUrlSecret": str(memgpt_user_api_key)+':'+str(default_agent_key)}
+            # vapi_assistant_response = await vapi_client.create_assistant(preset_name, customizations)
+            # vapi_assistant_id = vapi_assistant_response.get('id')  # Extract the 'id' from the response
+            # await vapi_client.close()
+            # logging.info(f"VAPI Assistant created with ID: {vapi_assistant_id}")
 
     # Check and update email and phone if necessary
     if not email and user_email is not None:

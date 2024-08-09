@@ -10,8 +10,8 @@ async def test_call():
     client = VAPIClient()
     
     # Call details
-    assistant_id = "ce5de399-9f8c-4e82-a594-ab5f733026ae"
-    customer_number = "+14156402234"
+    assistant_id = "-"
+    customer_number = "+"
     
     # Example assistant overrides (you can adjust these as needed)
     assistant_overrides = {

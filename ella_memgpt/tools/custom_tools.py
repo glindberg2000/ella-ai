@@ -40,7 +40,7 @@ def schedule_event(
         location (Optional[str]): The location of the event.
         reminders (Optional[str]): JSON string representation of reminders. 
             Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-            Supported reminder methods: 'email', 'popup', 'sms'
+            Supported reminder methods: 'email', 'popup', 'sms', 'voice'
             If not provided, user's default reminder preferences will be used.
         recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
         local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
@@ -173,7 +173,7 @@ def schedule_event(
 #         location (Optional[str]): The location of the event.
 #         reminders (Optional[str]): JSON string representation of reminders. 
 #             Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-#             Supported reminder methods: 'email', 'popup', 'sms'
+#             Supported reminder methods: 'email', 'popup', 'sms', 'voice'
 #             If not provided, user's default reminder preferences will be used.
 #         recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
 #         local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
@@ -329,188 +329,6 @@ def schedule_event(
 #         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})    
 
 
-# updated with conflict checks and Async
-# async def schedule_event(
-#     self: Agent,
-#     user_id: str,
-#     title: str,
-#     start: str,
-#     end: str,
-#     description: Optional[str] = None,
-#     location: Optional[str] = None,
-#     reminders: Optional[str] = None,
-#     recurrence: Optional[str] = None,
-#     local_timezone: Optional[str] = None
-# ) -> str:
-#     """
-#     Schedule a new event in the user's Google Calendar.
-
-#     Args:
-#         self (Agent): The agent instance calling the tool.
-#         user_id (str): The unique identifier for the user.
-#         title (str): The title of the event.
-#         start (str): The start time in ISO 8601 format.
-#         end (str): The end time in ISO 8601 format.
-#         description (Optional[str]): The description of the event.
-#         location (Optional[str]): The location of the event.
-#         reminders (Optional[str]): JSON string representation of reminders. 
-#             Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-#             Supported reminder methods: 'email', 'popup', 'sms'
-#             If not provided, user's default reminder preferences will be used.
-#         recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
-#         local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
-
-#     Returns:
-#         str: A JSON string indicating success or failure of the event creation.
-
-#     Examples:
-#         1. Schedule a one-time event with custom reminders:
-#             schedule_event(
-#                 self,
-#                 user_id='user123',
-#                 title='Doctor Appointment',
-#                 start='2024-08-01T10:00:00',
-#                 end='2024-08-01T11:00:00',
-#                 description='Annual check-up',
-#                 location='123 Clinic Street',
-#                 reminders='[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-#             )
-
-#         2. Schedule a weekly recurring event with default reminders:
-#             schedule_event(
-#                 self,
-#                 user_id='user123',
-#                 title='Morning Jog',
-#                 start='2024-08-01T07:00:00',
-#                 end='2024-08-01T08:00:00',
-#                 description='Time for a refreshing jog!',
-#                 location='The park',
-#                 recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU',
-#                 local_timezone='America/New_York'
-#             )
-#     """
-#     import logging
-#     import os
-#     import sys
-#     from typing import Optional, List, Dict, Union
-#     from dotenv import load_dotenv
-#     import json
-#     from datetime import timedelta
-#     import aiosqlite  # Add this import
-
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(logging.DEBUG)
-
-#     try:
-#         load_dotenv()
-#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-#             return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
-
-#         if MEMGPT_TOOLS_PATH not in sys.path:
-#             sys.path.append(MEMGPT_TOOLS_PATH)
-
-#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-#         from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
-
-#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-#         if not local_timezone:
-#             local_timezone = await UserDataManager.get_user_timezone(user_id)
-#         elif not is_valid_timezone(local_timezone):
-#             return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
-        
-#         start_time = parse_datetime(start, local_timezone)
-#         end_time = parse_datetime(end, local_timezone)
-
-#         # Fetch existing events to check for conflicts
-#         existing_events = calendar_utils.fetch_upcoming_events(
-#             user_id=user_id,
-#             max_results=50,  # Adjust as necessary
-#             time_min=start_time.isoformat(),
-#             time_max=end_time.isoformat(),
-#             local_timezone=local_timezone
-#         )
-
-#         # Check for conflicts
-#         conflicting_events = [
-#             event for event in existing_events.get('items', [])
-#             if (
-#                 (parse_datetime(event['start']['dateTime'], local_timezone) < end_time) and
-#                 (parse_datetime(event['end']['dateTime'], local_timezone) > start_time)
-#             )
-#         ]
-
-#         if conflicting_events:
-#             # Suggest alternative times
-#             alternative_times = []
-#             buffer_minutes = 30  # Buffer time between events
-#             buffer = timedelta(minutes=buffer_minutes)
-
-#             for conflict in conflicting_events:
-#                 conflict_start = parse_datetime(conflict['start']['dateTime'], local_timezone)
-#                 conflict_end = parse_datetime(conflict['end']['dateTime'], local_timezone)
-
-#                 # Suggest a time slot before the conflict
-#                 before_conflict_end_time = conflict_start - buffer
-#                 before_conflict_start_time = before_conflict_end_time - (end_time - start_time)
-#                 if before_conflict_start_time > start_time - timedelta(days=1):  # Ensure it does not suggest too far in the past
-#                     alternative_times.append((before_conflict_start_time.isoformat(), before_conflict_end_time.isoformat()))
-
-#                 # Suggest a time slot after the conflict
-#                 after_conflict_start_time = conflict_end + buffer
-#                 after_conflict_end_time = after_conflict_start_time + (end_time - start_time)
-#                 if after_conflict_end_time < end_time + timedelta(days=1):  # Ensure it does not suggest too far in the future
-#                     alternative_times.append((after_conflict_start_time.isoformat(), after_conflict_end_time.isoformat()))
-
-#             return json.dumps({
-#                 "success": False,
-#                 "message": "Conflicting events found.",
-#                 "conflicts": [{"id": event['id'], "title": event['summary'], "start": event['start']['dateTime'], "end": event['end']['dateTime']} for event in conflicting_events],
-#                 "suggested_times": alternative_times
-#             })
-
-#         event_data = {
-#             'summary': title,
-#             'start': {'dateTime': start_time.isoformat(), 'timeZone': local_timezone},
-#             'end': {'dateTime': end_time.isoformat(), 'timeZone': local_timezone},
-#             'description': description,
-#             'location': location,
-#         }
-
-#         if recurrence:
-#             event_data['recurrence'] = [recurrence]
-
-#         # Handle reminders
-#         if reminders is None:
-#             # Fetch user's default reminder preferences
-#             user_prefs = await UserDataManager.get_user_reminder_prefs(user_id)
-#             default_reminder_time = user_prefs['default_reminder_time']
-#             default_methods = user_prefs['reminder_method'].split(',')
-            
-#             reminders_list = [{'method': method, 'minutes': default_reminder_time} for method in default_methods]
-#         else:
-#             reminders_list = json.loads(reminders)
-
-#         event_data['reminders'] = {
-#             'useDefault': False,
-#             'overrides': reminders_list
-#         }
-
-#         result = calendar_utils.create_calendar_event(user_id, event_data, local_timezone)
-
-#         if result.get("success", False):
-#             return json.dumps({"success": True, "message": f"Event created: ID: {result.get('id', 'Unknown')}, Link: {result.get('htmlLink', 'No link available')}"})
-#         else:
-#             return json.dumps({"success": False, "message": result.get('message', 'Failed to create event')})
-
-#     except Exception as e:
-#         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
-#         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})    
-
 
 # Updated_event with no conflict checks:
 def update_event(
@@ -540,8 +358,8 @@ def update_event(
         description (Optional[str]): The new description for the event. If None, the description remains unchanged.
         location (Optional[str]): The new location for the event. If None, the location remains unchanged.
         reminders (Optional[str]): JSON string representation of new reminders. 
-            Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-            Supported reminder methods: 'email', 'popup', 'sms'
+            Format: '[{"method": "email", "minutes": 30}, {"method": "voice", "minutes": 10}]'
+            Supported reminder methods: 'email', 'popup', 'sms', 'voice'
             If None, reminders remain unchanged. If an empty list '[]' is provided, all reminders will be removed.
         recurrence (Optional[str]): New recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU"). 
             If None, recurrence remains unchanged. If an empty string is provided, recurrence will be removed.
@@ -558,7 +376,7 @@ def update_event(
                 user_id='user123',
                 event_id='event123',
                 title='Updated Doctor Appointment',
-                reminders='[{"method": "email", "minutes": 45}, {"method": "popup", "minutes": 15}]'
+                reminders='[{"method": "email", "minutes": 45}, {"method": "voice", "minutes": 15}]'
             )
 
         2. Change the time and recurrence of a recurring event:
@@ -1154,9 +972,110 @@ def send_sms(
         logger.error(f"Message failed to send with error: {str(e)}", exc_info=True)
         return f"Error: Message failed to send. {str(e)}"
 
+def send_voice(
+    self: Agent,
+    user_id: str,
+    body: str,
+) -> str:
+    """
+    Send a voice call reminder using the VAPI API.
+    
+    This function retrieves the user's phone number and assistant ID from the database using the provided MemGPT user ID.
+    If successful, a voice call is initiated using the VAPI API.
+    
+    Args:
+        self (Agent): The agent instance calling the tool.
+        user_id (str): The unique identifier for the user (recipient).
+        body (str): The content of the voice message to be spoken.
+        
+    Returns:
+        str: A status message indicating success or failure of the voice call initiation.
+    """
+    import logging
+    import os
+    import sys
+    from dotenv import load_dotenv
+    from typing import Optional
+    import asyncio
 
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        load_dotenv()
+        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+        VAPI_TOOLS_PATH = os.getenv('VAPI_TOOLS_PATH')
+        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+
+        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH or not VAPI_TOOLS_PATH:
+            return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH or VAPI_TOOLS_PATH not set in environment variables"
+        
+        logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
+        logger.debug(f"VAPI_TOOLS_PATH: {VAPI_TOOLS_PATH}")
+        logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
+        
+        if MEMGPT_TOOLS_PATH not in sys.path:
+            sys.path.append(MEMGPT_TOOLS_PATH)
+        if VAPI_TOOLS_PATH not in sys.path:
+            sys.path.append(VAPI_TOOLS_PATH)
+        
+        # Import UserDataManager and VAPIClient
+        from google_utils import UserDataManager
+        from vapi_client import VAPIClient
+        
+        # Retrieve all user data at once
+        user_data = UserDataManager.get_user_data(user_id)
+
+        # Extract specific fields from the user data dictionary
+        recipient_phone = user_data.get('phone')
+        if not recipient_phone:
+            return "Error: No valid recipient phone number available."
+        
+        # Extract assistant ID, fallback to environment variable if not found
+        assistant_id = user_data.get('vapi_assistant_id')
+        if not assistant_id:
+            assistant_id = os.getenv('VAPI_DEFAULT_ASSISTANT_ID')
+            logging.warning(f"No assistant ID found for user {user_id}. Using default: {assistant_id}")
+        else:
+            logging.info(f"Found assistant ID for user {user_id}: {assistant_id}")
+            
+        # Initialize VAPI client
+        client = VAPIClient()
+        
+        # Prepare call details
+        assistant_overrides = {
+            "firstMessage": body,
+            "recordingEnabled": True,
+            "maxDurationSeconds": 600,  # 10 minutes max call duration
+            "endCallPhrases": ["end the call", "goodbye", "hang up"]
+        }
+        
+        # Initiate the call
+        async def make_call():
+            result = await client.start_call(
+                name="Assistant Outbound Call",
+                assistant_id=assistant_id,
+                customer_number=recipient_phone,
+                assistant_overrides=assistant_overrides
+            )
+            #await client.close()
+            return result
+        
+        call_result = asyncio.run(make_call())
+        
+        if 'id' in call_result:
+            logger.info(f"Voice call successfully initiated. Call ID: {call_result['id']}")
+            return f"Voice call successfully initiated. Call ID: {call_result['id']}"
+        else:
+            logger.error(f"Failed to initiate voice call: {call_result}")
+            return f"Error: Voice call failed to initiate. Details: {call_result}"
+    
+    except Exception as e:
+        logger.error(f"Error in send_voice: {str(e)}", exc_info=True)
+        return f"Error initiating voice call: {str(e)}"
+    
 # List of all custom tools
-CUSTOM_TOOLS = [schedule_event, update_event, fetch_events, delete_event, send_email, send_sms]
+CUSTOM_TOOLS = [schedule_event, update_event, fetch_events, delete_event, send_email, send_sms, send_voice]
 
 
 
