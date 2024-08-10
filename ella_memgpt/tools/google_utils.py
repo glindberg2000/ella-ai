@@ -465,58 +465,6 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
          
-    # def fetch_upcoming_events(
-    #     self, 
-    #     user_id: str, 
-    #     max_results: int = 10, 
-    #     time_min: Optional[str] = None,
-    #     time_max: Optional[str] = None,
-    #     local_timezone: str = 'America/Los_Angeles'
-    # ) -> dict:
-    #     try:
-    #         calendar_id = self.get_or_create_user_calendar(user_id)
-    #         logging.debug(f"Calendar ID for user {user_id}: {calendar_id}")
-            
-    #         if not calendar_id:
-    #             logging.error(f"Unable to get calendar for user_id: {user_id}")
-    #             return {"items": []}
-
-    #         if not time_min:
-    #             time_min = datetime.now(pytz.timezone(local_timezone)).isoformat()
-    #         if not time_max:
-    #             time_max = (datetime.now(pytz.timezone(local_timezone)) + timedelta(days=1)).isoformat()
-
-    #         params = {
-    #             'calendarId': calendar_id,
-    #             'timeMin': time_min,
-    #             'timeMax': time_max,
-    #             'maxResults': max_results,
-    #             'singleEvents': True,
-    #             'orderBy': 'startTime',
-    #             'timeZone': local_timezone
-    #         }
-
-    #         logging.debug(f"Calendar API request params: {params}")
-
-    #         events_result = self.service.events().list(**params).execute()
-
-    #         logging.debug(f"Raw Calendar API response: {events_result}")
-
-    #         events = events_result.get('items', [])
-            
-    #         logging.debug(f"Number of events fetched: {len(events)}")
-
-    #         # Convert event times to user's timezone
-    #         for event in events:
-    #             start = event['start'].get('dateTime', event['start'].get('date'))
-    #             end = event['end'].get('dateTime', event['end'].get('date'))
-    #             event['start']['dateTime'] = self._localize_time(start, local_timezone).isoformat()
-    #             event['end']['dateTime'] = self._localize_time(end, local_timezone).isoformat()
-
-    #         return {"items": events}
-    #     except Exception as e:
-    #         logging.error(f"Error fetching events: {str(e)}", exc_info=True)
-    #         return {"items": []}
 
     def fetch_upcoming_events(
         self, 
@@ -579,32 +527,6 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logging.error(f"Error fetching events: {str(e)}", exc_info=True)
             return {"items": []}
             
-    # def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False, local_timezone: str = 'America/Los_Angeles') -> dict:
-    #     try:
-    #         calendar_id = self.get_or_create_user_calendar(user_id)
-    #         if not calendar_id:
-    #             return {"success": False, "message": "Unable to get or create user calendar"}
-
-    #         event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-
-    #         # Update event times if provided
-    #         if 'start' in event_data:
-    #             start_time = self._localize_time(event_data['start']['dateTime'], local_timezone)
-    #             event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
-    #         if 'end' in event_data:
-    #             end_time = self._localize_time(event_data['end']['dateTime'], local_timezone)
-    #             event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
-
-    #         if update_series and 'recurringEventId' in event:
-    #             series_id = event['recurringEventId']
-    #             updated_event = self.service.events().patch(calendarId=calendar_id, eventId=series_id, body=event_data).execute()
-    #             return {"success": True, "message": f"Event series updated successfully. ID: {series_id}", "event": updated_event}
-    #         else:
-    #             updated_event = self.service.events().patch(calendarId=calendar_id, eventId=event_id, body=event_data).execute()
-    #             return {"success": True, "message": "Event updated successfully", "event": updated_event}
-    #     except HttpError as e:
-    #         logging.error(f"Error in update_calendar_event: {str(e)}", exc_info=True)
-    #         return {"success": False, "message": f"Error updating event: {str(e)}"}
 
     def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False, local_timezone: str = 'America/Los_Angeles') -> dict:
         try:
@@ -683,7 +605,60 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error in delete_calendar_event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error deleting event: {str(e)}"}
 
+    def update_reminder_status(self, user_id: str, event_id: str, reminder_key: str) -> bool:
+        """
+        Update the reminder status for a specific event in Google Calendar.
 
+        Args:
+            user_id (str): The unique identifier for the user.
+            event_id (str): The ID of the event.
+            reminder_key (str): A unique key identifying the specific reminder.
+
+        Returns:
+            bool: True if the update was successful, False otherwise.
+        """
+        try:
+            calendar_id = self.get_or_create_user_calendar(user_id)
+            event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+            if 'extendedProperties' not in event:
+                event['extendedProperties'] = {'private': {}}
+            elif 'private' not in event['extendedProperties']:
+                event['extendedProperties']['private'] = {}
+
+            sent_reminders = json.loads(event['extendedProperties']['private'].get('sentReminders', '[]'))
+            if reminder_key not in sent_reminders:
+                sent_reminders.append(reminder_key)
+
+            event['extendedProperties']['private']['sentReminders'] = json.dumps(sent_reminders)
+
+            updated_event = self.service.events().update(calendarId=calendar_id, eventId=event_id, body=event).execute()
+            return 'sentReminders' in updated_event.get('extendedProperties', {}).get('private', {})
+        except Exception as e:
+            logger.error(f"Error updating reminder status: {str(e)}", exc_info=True)
+            return False
+
+    def check_reminder_status(self, user_id: str, event_id: str, reminder_key: str) -> bool:
+        """
+        Check if a specific reminder has been sent for an event.
+
+        Args:
+            user_id (str): The unique identifier for the user.
+            event_id (str): The ID of the event.
+            reminder_key (str): A unique key identifying the specific reminder.
+
+        Returns:
+            bool: True if the reminder has been sent, False otherwise.
+        """
+        try:
+            calendar_id = self.get_or_create_user_calendar(user_id)
+            event = self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+            sent_reminders = json.loads(event.get('extendedProperties', {}).get('private', {}).get('sentReminders', '[]'))
+            return reminder_key in sent_reminders
+        except Exception as e:
+            logger.error(f"Error checking reminder status: {str(e)}", exc_info=True)
+            return False
 
 class GoogleEmailUtils(GoogleAuthBase):
     def __init__(self, token_path: str, credentials_path: str):
