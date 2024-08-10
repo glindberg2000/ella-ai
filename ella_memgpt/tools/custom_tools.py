@@ -15,139 +15,6 @@ import aiosqlite  # Add this import
 # from twilio.rest import Client
 
 # original schedule without conflict checks    
-def schedule_event(
-    self: Agent,
-    user_id: str,
-    title: str,
-    start: str,
-    end: str,
-    description: Optional[str] = None,
-    location: Optional[str] = None,
-    reminders: Optional[str] = None,
-    recurrence: Optional[str] = None,
-    local_timezone: Optional[str] = None
-) -> str:
-    """
-    Schedule a new event in the user's Google Calendar.
-
-    Args:
-        self (Agent): The agent instance calling the tool.
-        user_id (str): The unique identifier for the user.
-        title (str): The title of the event.
-        start (str): The start time in ISO 8601 format.
-        end (str): The end time in ISO 8601 format.
-        description (Optional[str]): The description of the event.
-        location (Optional[str]): The location of the event.
-        reminders (Optional[str]): JSON string representation of reminders. 
-            Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-            Supported reminder methods: 'email', 'popup', 'sms', 'voice'
-            If not provided, user's default reminder preferences will be used.
-        recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
-        local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
-
-    Returns:
-        str: A JSON string indicating success or failure of the event creation.
-
-    Examples:
-        1. Schedule a one-time event with custom reminders:
-            schedule_event(
-                self,
-                user_id='user123',
-                title='Doctor Appointment',
-                start='2024-08-01T10:00:00',
-                end='2024-08-01T11:00:00',
-                description='Annual check-up',
-                location='123 Clinic Street',
-                reminders='[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-            )
-
-        2. Schedule a weekly recurring event with default reminders:
-            schedule_event(
-                self,
-                user_id='user123',
-                title='Morning Jog',
-                start='2024-08-01T07:00:00',
-                end='2024-08-01T08:00:00',
-                description='Time for a refreshing jog!',
-                location='The park',
-                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU',
-                local_timezone='America/New_York'
-            )
-    """
-    import logging
-    import os
-    import sys
-    from typing import Optional, List, Dict, Union
-    from dotenv import load_dotenv
-    import json
-
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-
-    try:
-        load_dotenv()
-        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-            return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
-
-        if MEMGPT_TOOLS_PATH not in sys.path:
-            sys.path.append(MEMGPT_TOOLS_PATH)
-
-        GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-        GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
-
-        calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-        if not local_timezone:
-            local_timezone = UserDataManager.get_user_timezone(user_id)
-        elif not is_valid_timezone(local_timezone):
-            return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
-        
-        start_time = parse_datetime(start, local_timezone)
-        end_time = parse_datetime(end, local_timezone)
-
-        event_data = {
-            'summary': title,
-            'start': {'dateTime': start_time.isoformat(), 'timeZone': local_timezone},
-            'end': {'dateTime': end_time.isoformat(), 'timeZone': local_timezone},
-            'description': description,
-            'location': location,
-        }
-
-        if recurrence:
-            event_data['recurrence'] = [recurrence]
-
-        # Handle reminders
-        if reminders is None:
-            # Fetch user's default reminder preferences
-            user_prefs = UserDataManager.get_user_reminder_prefs(user_id)
-            default_reminder_time = user_prefs['default_reminder_time']
-            default_methods = user_prefs['reminder_method'].split(',')
-            
-            reminders_list = [{'method': method, 'minutes': default_reminder_time} for method in default_methods]
-        else:
-            reminders_list = json.loads(reminders)
-
-        event_data['reminders'] = {
-            'useDefault': False,
-            'overrides': reminders_list
-        }
-
-        result = calendar_utils.create_calendar_event(user_id, event_data, local_timezone)
-
-        if result.get("success", False):
-            return json.dumps({"success": True, "message": f"Event created: ID: {result.get('id', 'Unknown')}, Link: {result.get('htmlLink', 'No link available')}"})
-        else:
-            return json.dumps({"success": False, "message": result.get('message', 'Failed to create event')})
-
-    except Exception as e:
-        logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
-        return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
-
-# updated schedule event with conflict checks:
 # def schedule_event(
 #     self: Agent,
 #     user_id: str,
@@ -213,7 +80,6 @@ def schedule_event(
 #     from typing import Optional, List, Dict, Union
 #     from dotenv import load_dotenv
 #     import json
-#     from datetime import timedelta
 
 #     logger = logging.getLogger(__name__)
 #     logger.setLevel(logging.DEBUG)
@@ -242,53 +108,6 @@ def schedule_event(
         
 #         start_time = parse_datetime(start, local_timezone)
 #         end_time = parse_datetime(end, local_timezone)
-
-#         # Fetch existing events to check for conflicts
-#         existing_events = calendar_utils.fetch_upcoming_events(
-#             user_id=user_id,
-#             max_results=50,  # Adjust as necessary
-#             time_min=start_time.isoformat(),
-#             time_max=end_time.isoformat(),
-#             local_timezone=local_timezone
-#         )
-
-#         # Check for conflicts
-#         conflicting_events = [
-#             event for event in existing_events.get('items', [])
-#             if (
-#                 (parse_datetime(event['start']['dateTime'], local_timezone) < end_time) and
-#                 (parse_datetime(event['end']['dateTime'], local_timezone) > start_time)
-#             )
-#         ]
-
-#         if conflicting_events:
-#             # Suggest alternative times
-#             alternative_times = []
-#             buffer_minutes = 30  # Buffer time between events
-#             buffer = timedelta(minutes=buffer_minutes)
-
-#             for conflict in conflicting_events:
-#                 conflict_start = parse_datetime(conflict['start']['dateTime'], local_timezone)
-#                 conflict_end = parse_datetime(conflict['end']['dateTime'], local_timezone)
-
-#                 # Suggest a time slot before the conflict
-#                 before_conflict_end_time = conflict_start - buffer
-#                 before_conflict_start_time = before_conflict_end_time - (end_time - start_time)
-#                 if before_conflict_start_time > start_time - timedelta(days=1):  # Ensure it does not suggest too far in the past
-#                     alternative_times.append((before_conflict_start_time.isoformat(), before_conflict_end_time.isoformat()))
-
-#                 # Suggest a time slot after the conflict
-#                 after_conflict_start_time = conflict_end + buffer
-#                 after_conflict_end_time = after_conflict_start_time + (end_time - start_time)
-#                 if after_conflict_end_time < end_time + timedelta(days=1):  # Ensure it does not suggest too far in the future
-#                     alternative_times.append((after_conflict_start_time.isoformat(), after_conflict_end_time.isoformat()))
-
-#             return json.dumps({
-#                 "success": False,
-#                 "message": "Conflicting events found.",
-#                 "conflicts": [{"id": event['id'], "title": event['summary'], "start": event['start']['dateTime'], "end": event['end']['dateTime']} for event in conflicting_events],
-#                 "suggested_times": alternative_times
-#             })
 
 #         event_data = {
 #             'summary': title,
@@ -326,13 +145,127 @@ def schedule_event(
 
 #     except Exception as e:
 #         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
-#         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})    
+#         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
+
+#updated schedule event with conflict checks:
+
+
+def schedule_event(
+    self: 'Agent',
+    user_id: str,
+    title: str,
+    start: str,
+    end: str,
+    description: Optional[str] = None,
+    location: Optional[str] = None,
+    reminders: Optional[str] = None,
+    recurrence: Optional[str] = None,
+    local_timezone: Optional[str] = None
+) -> str:
+    """
+    Schedule a new event in the user's Google Calendar with unified reminder support.
+
+    Args:
+        self (Agent): The agent instance calling the tool.
+        user_id (str): The unique identifier for the user.
+        title (str): The title of the event.
+        start (str): The start time in ISO 8601 format.
+        end (str): The end time in ISO 8601 format.
+        description (Optional[str]): The description of the event.
+        location (Optional[str]): The location of the event.
+        reminders (Optional[str]): JSON string representation of reminders.
+            Format: '[{"type": "email", "minutes": 30}, {"type": "popup", "minutes": 10}, {"type": "voice", "minutes": 60}]'
+            Supported reminder types: 'email', 'popup', 'sms', 'voice', 'app', etc.
+        recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
+        local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
+
+    Returns:
+        str: A JSON string indicating success or failure of the event creation.
+
+    Examples:
+        1. Schedule a one-time event with multiple reminder types:
+            schedule_event(
+                self,
+                user_id='user123',
+                title='Doctor Appointment',
+                start='2024-08-01T10:00:00',
+                end='2024-08-01T11:00:00',
+                description='Annual check-up',
+                location='123 Clinic Street',
+                reminders='[{"type": "email", "minutes": 30}, {"type": "popup", "minutes": 10}, {"type": "voice", "minutes": 60}]'
+            )
+
+        2. Schedule a weekly recurring event with default reminders:
+            schedule_event(
+                self,
+                user_id='user123',
+                title='Morning Jog',
+                start='2024-08-01T07:00:00',
+                end='2024-08-01T08:00:00',
+                description='Time for a refreshing jog!',
+                location='The park',
+                recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU',
+                local_timezone='America/New_York'
+            )
+    """
+    import logging
+    import os
+    import sys
+    from typing import Optional, List, Dict, Union
+    from dotenv import load_dotenv
+    import json
+    from datetime import datetime, timedelta
+    import pytz
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        load_dotenv()
+        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
+        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
+        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
+            return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
+
+        if MEMGPT_TOOLS_PATH not in sys.path:
+            sys.path.append(MEMGPT_TOOLS_PATH)
+
+        GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
+        GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
+
+        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone
+
+        calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+
+        if not local_timezone:
+            local_timezone = UserDataManager.get_user_timezone(user_id)
+        elif not is_valid_timezone(local_timezone):
+            return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
+
+        # Check for conflicts
+        conflict_check = calendar_utils.check_conflicts(user_id, start, end, local_timezone=local_timezone)
+        if not conflict_check["success"]:
+            return json.dumps(conflict_check)  # Return conflict information
+
+        event_data = calendar_utils.prepare_event_data(
+            user_id, title, start, end, description, location, reminders, recurrence, local_timezone
+        )
+
+        result = calendar_utils.create_calendar_event(user_id, event_data, local_timezone)
+
+        if result.get("success", False):
+            return json.dumps({"success": True, "message": f"Event created: ID: {result.get('id', 'Unknown')}, Link: {result.get('htmlLink', 'No link available')}"})
+        else:
+            return json.dumps({"success": False, "message": result.get('message', 'Failed to create event')})
+
+    except Exception as e:
+        logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
+        return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
 
 
 
-# Updated_event with no conflict checks:
 def update_event(
-    self: Agent,
+    self: 'Agent',
     user_id: str,
     event_id: str,
     title: Optional[str] = None,
@@ -346,7 +279,7 @@ def update_event(
     local_timezone: Optional[str] = None
 ) -> str:
     """
-    Update an existing event in the user's Google Calendar.
+    Update an existing event in the user's Google Calendar with enhanced reminder support.
 
     Args:
         self (Agent): The agent instance calling the tool.
@@ -357,9 +290,9 @@ def update_event(
         end (Optional[str]): The new end time in ISO 8601 format. If None, the end time remains unchanged.
         description (Optional[str]): The new description for the event. If None, the description remains unchanged.
         location (Optional[str]): The new location for the event. If None, the location remains unchanged.
-        reminders (Optional[str]): JSON string representation of new reminders. 
-            Format: '[{"method": "email", "minutes": 30}, {"method": "voice", "minutes": 10}]'
-            Supported reminder methods: 'email', 'popup', 'sms', 'voice'
+        reminders (Optional[str]): JSON string representation of new reminders.
+            Format: '[{"type": "email", "minutes": 30}, {"type": "popup", "minutes": 10}, {"type": "voice", "minutes": 60}]'
+            Supported reminder types: 'email', 'popup', 'sms', 'voice', 'app', etc.
             If None, reminders remain unchanged. If an empty list '[]' is provided, all reminders will be removed.
         recurrence (Optional[str]): New recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU"). 
             If None, recurrence remains unchanged. If an empty string is provided, recurrence will be removed.
@@ -370,13 +303,13 @@ def update_event(
         str: A JSON string containing information about the success or failure of the event update.
 
     Examples:
-        1. Update the title and add a reminder to an existing event:
+        1. Update the title and add multiple types of reminders to an existing event:
             update_event(
                 self,
                 user_id='user123',
                 event_id='event123',
                 title='Updated Doctor Appointment',
-                reminders='[{"method": "email", "minutes": 45}, {"method": "voice", "minutes": 15}]'
+                reminders='[{"type": "email", "minutes": 45}, {"type": "popup", "minutes": 15}, {"type": "voice", "minutes": 60}]'
             )
 
         2. Change the time and recurrence of a recurring event:
@@ -404,6 +337,8 @@ def update_event(
     from typing import Optional, List, Dict, Union
     from dotenv import load_dotenv
     import json
+    from datetime import datetime, timedelta
+    import pytz
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
@@ -421,39 +356,58 @@ def update_event(
         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
 
-        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
+        from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone
 
         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
 
-        if local_timezone is None:
+        if not local_timezone:
             local_timezone = UserDataManager.get_user_timezone(user_id)
-        
-        if local_timezone and not is_valid_timezone(local_timezone):
+        elif not is_valid_timezone(local_timezone):
             return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
 
-        event_data = {}
-        if title is not None:
-            event_data['summary'] = title
-        if start is not None:
-            start_time = parse_datetime(start, local_timezone)
-            event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
-        if end is not None:
-            end_time = parse_datetime(end, local_timezone)
-            event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
-        if description is not None:
-            event_data['description'] = description
-        if location is not None:
-            event_data['location'] = location
-        if reminders is not None:
-            reminders_list = json.loads(reminders)
-            event_data['reminders'] = {
-                'useDefault': False,
-                'overrides': reminders_list
-            }
-        if recurrence is not None:
-            event_data['recurrence'] = [recurrence] if recurrence else None
+        # Fetch the existing event
+        existing_event = calendar_utils.get_calendar_event(user_id, event_id)
+        if not existing_event:
+            return json.dumps({"success": False, "message": f"Event with ID {event_id} not found"})
 
-        result = calendar_utils.update_calendar_event(user_id, event_id, event_data, update_series, local_timezone)
+        # Check for conflicts if start or end time is being updated
+        if start is not None or end is not None:
+            new_start = start or existing_event['start'].get('dateTime', existing_event['start'].get('date'))
+            new_end = end or existing_event['end'].get('dateTime', existing_event['end'].get('date'))
+            conflict_check = calendar_utils.check_conflicts(user_id, new_start, new_end, event_id, local_timezone)
+            if not conflict_check["success"]:
+                return json.dumps(conflict_check)  # Return conflict information
+
+        # Prepare the update data
+        update_data = calendar_utils.prepare_event_data(
+            user_id,
+            title or existing_event['summary'],
+            start or existing_event['start'].get('dateTime', existing_event['start'].get('date')),
+            end or existing_event['end'].get('dateTime', existing_event['end'].get('date')),
+            description if description is not None else existing_event.get('description'),
+            location if location is not None else existing_event.get('location'),
+            reminders,
+            recurrence if recurrence is not None else existing_event.get('recurrence'),
+            local_timezone
+        )
+
+        # Remove any fields that weren't specified in the update
+        if title is None:
+            del update_data['summary']
+        if start is None and end is None:
+            del update_data['start']
+            del update_data['end']
+        if description is None:
+            update_data.pop('description', None)
+        if location is None:
+            update_data.pop('location', None)
+        if reminders is None:
+            update_data.pop('reminders', None)
+            update_data.pop('extendedProperties', None)
+        if recurrence is None:
+            update_data.pop('recurrence', None)
+
+        result = calendar_utils.update_calendar_event(user_id, event_id, update_data, update_series, local_timezone)
 
         if result.get("success", False):
             return json.dumps({"success": True, "event_id": result['event']['id'], "message": "Event updated successfully"})
@@ -463,82 +417,39 @@ def update_event(
     except Exception as e:
         logger.error(f"Error in update_event: {str(e)}", exc_info=True)
         return json.dumps({"success": False, "message": f"Error updating event: {str(e)}"})
-
-#with conflict checks:
-# def update_event(
+    
+# def fetch_events(
 #     self: Agent,
 #     user_id: str,
-#     event_id: str,
-#     title: Optional[str] = None,
-#     start: Optional[str] = None,
-#     end: Optional[str] = None,
-#     description: Optional[str] = None,
-#     location: Optional[str] = None,
-#     reminders: Optional[str] = None,
-#     recurrence: Optional[str] = None,
-#     update_series: bool = False,
+#     max_results: int = 10,
+#     time_min: Optional[str] = None,
+#     time_max: Optional[str] = None,
 #     local_timezone: Optional[str] = None
 # ) -> str:
 #     """
-#     Update an existing event in the user's Google Calendar.
+#     Fetch upcoming events from the user's Google Calendar within the specified time range.
 
 #     Args:
 #         self (Agent): The agent instance calling the tool.
 #         user_id (str): The unique identifier for the user.
-#         event_id (str): The unique identifier for the event to be updated.
-#         title (Optional[str]): The new title for the event. If None, the title remains unchanged.
-#         start (Optional[str]): The new start time in ISO 8601 format. If None, the start time remains unchanged.
-#         end (Optional[str]): The new end time in ISO 8601 format. If None, the end time remains unchanged.
-#         description (Optional[str]): The new description for the event. If None, the description remains unchanged.
-#         location (Optional[str]): The new location for the event. If None, the location remains unchanged.
-#         reminders (Optional[str]): JSON string representation of new reminders. 
-#             Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-#             Supported reminder methods: 'email', 'popup', 'sms'
-#             If None, reminders remain unchanged. If an empty list '[]' is provided, all reminders will be removed.
-#         recurrence (Optional[str]): New recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU"). 
-#             If None, recurrence remains unchanged. If an empty string is provided, recurrence will be removed.
-#         update_series (bool): If True, update the entire event series if the event is part of a recurring series.
-#         local_timezone (Optional[str]): The new timezone for the event. If None, the timezone remains unchanged.
+#         max_results (int): The maximum number of events to return. Default is 10.
+#         time_min (Optional[str]): The minimum time to filter events in ISO 8601 format. Default is None.
+#                                   Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
+#         time_max (Optional[str]): The maximum time to filter events in ISO 8601 format. Default is None.
+#                                   Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
+#         local_timezone (Optional[str]): The timezone for the events. If None, the user's default timezone will be used.
 
 #     Returns:
-#         str: A JSON string containing information about the success or failure of the event update.
-
-#     Examples:
-#         1. Update the title and add a reminder to an existing event:
-#             update_event(
-#                 self,
-#                 user_id='user123',
-#                 event_id='event123',
-#                 title='Updated Doctor Appointment',
-#                 reminders='[{"method": "email", "minutes": 45}, {"method": "popup", "minutes": 15}]'
-#             )
-
-#         2. Change the time and recurrence of a recurring event:
-#             update_event(
-#                 self,
-#                 user_id='user123',
-#                 event_id='event123',
-#                 start='2024-08-01T08:00:00',
-#                 end='2024-08-01T09:00:00',
-#                 recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR',
-#                 update_series=True
-#             )
-
-#         3. Remove all reminders from an event:
-#             update_event(
-#                 self,
-#                 user_id='user123',
-#                 event_id='event123',
-#                 reminders='[]'
-#             )
+#         str: A JSON string describing the fetched events.
 #     """
-#     import logging
 #     import os
 #     import sys
-#     from typing import Optional, List, Dict, Union
+#     import logging
 #     from dotenv import load_dotenv
 #     import json
-#     from datetime import timedelta
+#     from datetime import datetime
+#     import pytz
+#     from typing import Optional
 
 #     logger = logging.getLogger(__name__)
 #     logger.setLevel(logging.DEBUG)
@@ -560,96 +471,53 @@ def update_event(
 
 #         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
 
-#         if local_timezone is None:
+#         if not local_timezone:
 #             local_timezone = UserDataManager.get_user_timezone(user_id)
-        
-#         if local_timezone and not is_valid_timezone(local_timezone):
+#         elif not is_valid_timezone(local_timezone):
 #             return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
 
-#         if start is not None and end is not None:
-#             start_time = parse_datetime(start, local_timezone)
-#             end_time = parse_datetime(end, local_timezone)
+#         logger.debug(f"Fetching events for user_id: {user_id}, timezone: {local_timezone}")
 
-#             # Fetch existing events to check for conflicts
-#             existing_events = calendar_utils.fetch_upcoming_events(
-#                 user_id=user_id,
-#                 max_results=50,  # Adjust as necessary
-#                 time_min=start_time.isoformat(),
-#                 time_max=end_time.isoformat(),
-#                 local_timezone=local_timezone
-#             )
+#         tz = pytz.timezone(local_timezone)
+#         now = datetime.now(tz)
 
-#             # Check for conflicts
-#             conflicting_events = [
-#                 event for event in existing_events.get('items', [])
-#                 if (
-#                     (parse_datetime(event['start']['dateTime'], local_timezone) < end_time) and
-#                     (parse_datetime(event['end']['dateTime'], local_timezone) > start_time)
-#                 )
-#             ]
+#         if not time_min:
+#             time_min = now.isoformat()
+#         if not time_max:
+#             time_max = (now + timedelta(days=1)).isoformat()
 
-#             if conflicting_events:
-#                 # Suggest alternative times
-#                 alternative_times = []
-#                 buffer_minutes = 30  # Buffer time between events
-#                 buffer = timedelta(minutes=buffer_minutes)
+#         logger.debug(f"Time range: {time_min} to {time_max}")
 
-#                 for conflict in conflicting_events:
-#                     conflict_start = parse_datetime(conflict['start']['dateTime'], local_timezone)
-#                     conflict_end = parse_datetime(conflict['end']['dateTime'], local_timezone)
+#         events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, time_max, local_timezone)
 
-#                     # Suggest a time slot before the conflict
-#                     before_conflict_end_time = conflict_start - buffer
-#                     before_conflict_start_time = before_conflict_end_time - (end_time - start_time)
-#                     if before_conflict_start_time > start_time - timedelta(days=1):  # Ensure it does not suggest too far in the past
-#                         alternative_times.append((before_conflict_start_time.isoformat(), before_conflict_end_time.isoformat()))
+#         logger.debug(f"Fetched events data: {events_data}")
 
-#                     # Suggest a time slot after the conflict
-#                     after_conflict_start_time = conflict_end + buffer
-#                     after_conflict_end_time = after_conflict_start_time + (end_time - start_time)
-#                     if after_conflict_end_time < end_time + timedelta(days=1):  # Ensure it does not suggest too far in the future
-#                         alternative_times.append((after_conflict_start_time.isoformat(), after_conflict_end_time.isoformat()))
+#         if not events_data.get('items', []):
+#             return json.dumps({"success": True, "message": "No upcoming events found.", "events": []})
 
-#                 return json.dumps({
-#                     "success": False,
-#                     "message": "Conflicting events found.",
-#                     "conflicts": [{"id": event['id'], "title": event['summary'], "start": event['start']['dateTime'], "end": event['end']['dateTime']} for event in conflicting_events],
-#                     "suggested_times": alternative_times
-#                 })
-
-#         event_data = {}
-#         if title is not None:
-#             event_data['summary'] = title
-#         if start is not None:
-#             event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
-#         if end is not None:
-#             event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
-#         if description is not None:
-#             event_data['description'] = description
-#         if location is not None:
-#             event_data['location'] = location
-#         if reminders is not None:
-#             reminders_list = json.loads(reminders)
-#             event_data['reminders'] = {
-#                 'useDefault': False,
-#                 'overrides': reminders_list
+#         event_list = []
+#         for event in events_data['items']:
+#             event_summary = {
+#                 'title': event['summary'],
+#                 'start': event['start'].get('dateTime', event['start'].get('date')),
+#                 'end': event['end'].get('dateTime', event['end'].get('date')),
+#                 'id': event['id']
 #             }
-#         if recurrence is not None:
-#             event_data['recurrence'] = [recurrence] if recurrence else None
+#             event_list.append(event_summary)
 
-#         result = calendar_utils.update_calendar_event(user_id, event_id, event_data, update_series, local_timezone)
+#         result = {
+#             "success": True,
+#             "events": event_list
+#         }
 
-#         if result.get("success", False):
-#             return json.dumps({"success": True, "event_id": result['event']['id'], "message": "Event updated successfully"})
-#         else:
-#             return json.dumps({"success": False, "message": result.get('message', 'Unknown error')})
+#         return json.dumps(result)
 
 #     except Exception as e:
-#         logger.error(f"Error in update_event: {str(e)}", exc_info=True)
-#         return json.dumps({"success": False, "message": f"Error updating event: {str(e)}"})
+#         logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
+#         return json.dumps({"success": False, "message": f"Error fetching events: {str(e)}"})
 
 def fetch_events(
-    self: Agent,
+    self: 'Agent',
     user_id: str,
     max_results: int = 10,
     time_min: Optional[str] = None,
@@ -664,20 +532,20 @@ def fetch_events(
         user_id (str): The unique identifier for the user.
         max_results (int): The maximum number of events to return. Default is 10.
         time_min (Optional[str]): The minimum time to filter events in ISO 8601 format. Default is None.
-                                  Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
+            Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
         time_max (Optional[str]): The maximum time to filter events in ISO 8601 format. Default is None.
-                                  Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
+            Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
         local_timezone (Optional[str]): The timezone for the events. If None, the user's default timezone will be used.
 
     Returns:
-        str: A JSON string describing the fetched events.
+        str: A JSON string describing the fetched events, including standard and custom reminders.
     """
     import os
     import sys
     import logging
     from dotenv import load_dotenv
     import json
-    from datetime import datetime
+    from datetime import datetime, timedelta
     import pytz
     from typing import Optional
 
@@ -719,7 +587,6 @@ def fetch_events(
         logger.debug(f"Time range: {time_min} to {time_max}")
 
         events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, time_max, local_timezone)
-
         logger.debug(f"Fetched events data: {events_data}")
 
         if not events_data.get('items', []):
@@ -728,11 +595,37 @@ def fetch_events(
         event_list = []
         for event in events_data['items']:
             event_summary = {
+                'id': event['id'],
                 'title': event['summary'],
                 'start': event['start'].get('dateTime', event['start'].get('date')),
                 'end': event['end'].get('dateTime', event['end'].get('date')),
-                'id': event['id']
+                'description': event.get('description', ''),
+                'location': event.get('location', ''),
+                'reminders': []
             }
+
+            # Handle standard reminders
+            if 'reminders' in event and 'overrides' in event['reminders']:
+                for reminder in event['reminders']['overrides']:
+                    event_summary['reminders'].append({
+                        'type': reminder['method'],
+                        'minutes': reminder['minutes']
+                    })
+
+            # Handle custom reminders from extended properties
+            if 'extendedProperties' in event and 'private' in event['extendedProperties']:
+                custom_reminders = event['extendedProperties']['private'].get('customReminders')
+                if custom_reminders:
+                    try:
+                        custom_reminders_list = json.loads(custom_reminders)
+                        event_summary['reminders'].extend(custom_reminders_list)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Invalid JSON in customReminders for event {event['id']}")
+
+            # Handle recurrence
+            if 'recurrence' in event:
+                event_summary['recurrence'] = event['recurrence']
+
             event_list.append(event_summary)
 
         result = {
@@ -745,7 +638,7 @@ def fetch_events(
     except Exception as e:
         logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
         return json.dumps({"success": False, "message": f"Error fetching events: {str(e)}"})
-
+    
 def delete_event(
     self: Agent,
     user_id: str,

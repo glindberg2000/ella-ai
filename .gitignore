@@ -5,6 +5,8 @@ dist
 *.egg-info/
 .env
 
+!.env.example
+
 *.files
 
 poetry.lock

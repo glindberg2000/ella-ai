@@ -1,524 +1,350 @@
-#vapi_service.py
-#handles incoming voice service messages, queues for processing by LLM and sends respones 
-
-from fastapi import FastAPI, Request, HTTPException, Header
-from fastapi.responses import StreamingResponse, Response
-import uuid
-import asyncio
-import json
-import time
 import os
-from redis.asyncio import Redis
-from redis.exceptions import ResponseErrorc
+import re
 import logging
-from typing import Optional
+from fastapi import FastAPI, Request, HTTPException, Header
+from fastapi.responses import StreamingResponse
 import httpx
-from ella_memgpt.extendedRESTclient import ExtendedRESTClient
-from memgpt.client.client import RESTClient as memgpt_client
+from typing import AsyncGenerator, Dict, Optional, Tuple
+import json
+import asyncio
+from memgpt.client.client import RESTClient
+from ella_vapi.vapi_client import VAPIClient
+import uuid
+from ella_dbo.db_manager import (
+    create_connection,
+    close_connection,
+    get_user_data_by_field
+)
+from datetime import datetime, timedelta
+import time
+from dateutil import parser
 
-from contextlib import asynccontextmanager
 
 
-
-# MemGPT connection
-# Load environment variables from .env file
-base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
-
-# Logging configuration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-debug = True  # Turn on debug mode to see detailed logs
-# Context manager to handle the lifespan of the app
-
-
-@asynccontextmanager
-async def vapi_app_lifespan(vapi_app: FastAPI):
-    # Redis connection
-    redis_url = f"redis://:{os.getenv('REDIS_PASSWORD')}@localhost:6379"
-    # Initialize Redis connection
-    vapi_app.redis = Redis.from_url(redis_url, decode_responses=True, encoding='utf-8')
-    
-    # Start the background task that depends on Redis
-    task = asyncio.create_task(worker_process())
-    vapi_app.state.background_task = task
-
-    try:
-        yield
-    finally:
-        # First, cancel and wait for the background task to finish
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                # Task cancellation is expected on shutdown
-                pass
-
-        # Then, safely close the Redis connection
-        if vapi_app.redis:
-            try:
-                await vapi_app.redis.close()
-            except Exception as e:
-                print(f"Error closing Redis connection: {e}")
-
-
-# Assign the lifespan context manager to the FastAPI instance
-vapi_app = FastAPI(lifespan=vapi_app_lifespan)
-vapi_app.router.lifespan_context = vapi_app_lifespan
-
-
-
-async def queue_request(server_url_secret, user_api_key, agent_id, latest_message, request_id):
-    """Queue a new request in Redis with a unique `request_id` or return the existing response if already processed.
-
-    Args:
-        redis: Redis client instance.
-        server_url_secret (str): The secret key for the server URL.
-        user_api_key (str): The user's API key.
-        agent_id (str): The agent's ID.
-        latest_message (str): The latest incoming message.
-        request_id (str): The unique identifier for the request.
-
-    Returns:
-        str: The `request_id` if the request was queued successfully or found in the output database.
-    """
-    # Check if a response already exists in the responses database
-    existing_response = await vapi_app.redis.lindex(f"responses:{request_id}", 0)  # Direct key access
-    if existing_response:
-        logging.info(f"Existing response found for request_id: {request_id}. No need to queue a new request.")
-        return request_id  # Existing response already processed
-
-    # Check if the request ID is in the request queue
-    existing_request = await vapi_app.redis.lrange("requests", 0, -1)  # Looping through the queue to check
-    for req in existing_request:
-        request_data = json.loads(req)
-        if request_data["request_id"] == request_id:
-            logging.info(f"Request with this ID already in the queue: {request_id}.")
-            return request_id
-
-    # Queue a new request if the ID is unique
-    await vapi_app.redis.lpush("requests", json.dumps({
-        "request_id": request_id,
-        "incoming_message": latest_message,
-        "timestamp_created": time.time(),
-        "server_url_secret": server_url_secret,
-        "user_api_key": user_api_key,
-        "agent_id": agent_id,
-        "raw_message_placeholder": None
-    }))
-    
-    logging.info(f"New request queued with request_id: {request_id}.")
-    return request_id  # Successfully queued new request
-
-
-
-# async def send_message_to_agent(agent_id, message, user_api_key):
-#     url = f"{base_url}/api/agents/{agent_id}/messages"
-#     payload = {"stream": False,
-#                "message": message,
-#                 "role": "user"}
-#     headers = {
-#         "accept": "application/json",
-#         "content-type": "application/json",
-#         "authorization": f"Bearer {user_api_key}"
-#     }
-
-#     async with httpx.AsyncClient() as client:
-#         response = await client.post(url, json=payload, headers=headers)
-#         return response
-    
-
-async def worker_process():
-    """Background worker process to consume requests, process them, and store responses."""
-    logging.info(f"Started Worker process...")
-    while True:
-        print ('.', end='')
-        #logging.info("Checking for requests in Redis...")
-
-        # Retrieve the latest request data from Redis
-        raw_data = await vapi_app.redis.rpop("requests")
-
-        if not raw_data:
-            #print ('.')
-            #logging.info(".")
-            await asyncio.sleep(.1)
-            continue
-        
-        # Decode the raw data
-        try:
-            req_data = json.loads(raw_data)
-        except json.JSONDecodeError:
-            logging.error("Failed to decode request data.")
-            logging.error(f"Request data: {raw_data}")
-            continue
-        
-        request_id = req_data.get("request_id")
-        if not request_id:
-            logging.error("Request data missing 'request_id'.")
-            continue
-        
-        logging.info(f"Processing request with ID: {request_id}")
-
-        # Process the request data
-        processed_response = await process_request(req_data)
-        
-        # Store the processed response with `request_id`
-        await vapi_app.redis.rpush(f"responses:{request_id}", json.dumps(processed_response))
-        logging.info(f"Stored processed response with request_id: {request_id}.")
-
-
-
-def assistant_messages(json_data):
-    # Extract all assistant messages
-    messages = [item["assistant_message"] for item in json_data if "assistant_message" in item]
-    
-    # Join messages with proper punctuation
-    assistant_messages = " ".join(message.rstrip(".,!") + "." for message in messages)
-    
-    return assistant_messages
-
-async def process_request(req_data):
-    # Extract and validate required data from req_data
-    request_id = req_data.get("request_id", None)
-    incoming_message = req_data.get("incoming_message", None)
-    user_api_key = req_data.get("user_api_key", None)
-    agent_id = req_data.get("agent_id", None)
-    timestamp_created = req_data.get("timestamp_created", None)       
-    raw_message_placeholder = req_data.get("raw_message_placeholder", None)
-    server_url_secret = req_data.get("server_url_secret", None)
-
-    # Ensure that the critical data is not missing
-    if not request_id:
-        raise ValueError("The 'request_id' is required but not found in the request data.")
-
-    if not incoming_message:
-        raise ValueError("The 'incoming_message' is required but not found in the request data.")
-
-    if not user_api_key:
-        raise ValueError("The 'user_api_key' is missing but is expected in the request data.")
-
-    if not agent_id:
-        raise ValueError("The 'agent_id' is missing but is expected in the request data.")
-
-    #user_api = ExtendedRESTClient(base_url, user_api_key, debug)
-    user_api = memgpt_client(base_url, user_api_key, debug)
-
- #Call the send_message function and unpack the result
- # Log the data before sending the message
-    
-
-    try:
-        # Attempt to send the message to the agent and get the response
-        logging.debug(f"Sending message to agent: {agent_id}, incoming message: {incoming_message}, user API key: {user_api_key}")
-        user_message_response = user_api.send_message(agent_id, incoming_message, "user", False)
-
-        # Check if the response has the "messages" attribute
-        if hasattr(user_message_response, 'messages'):
-            message_details = user_message_response.messages
-            logging.debug(f"Received message details: {message_details}")
-        else:
-            # Handle the case where "messages" is missing
-            logging.warning("Response from user_api.send_message did not contain 'messages' attribute.")
-            if hasattr(user_message_response, 'detail'):
-                # Log the error detail if present
-                logging.warning(f"Response contained error detail: {user_message_response.detail}")
-            else:
-                # General error message if no other detail is provided
-                logging.warning("Unknown error in response from user_api.send_message.")
-        
-    except Exception as e:
-        logging.error(f"Exception when sending message to agent: {str(e)}")
-        # Raise the exception or handle it appropriately
-        raise
-
-    
-
-    #     def user_message(self, agent_id: str, message: str) -> Union[List[Dict], Tuple[List[Dict], int]]:
-    #     return self.send_message(agent_id, message, role="user")
-            # def send_message(self, agent_id: uuid.UUID, message: str, role: str, stream: Optional[bool] = False) -> UserMessageResponse:
-            # data = {"message": message, "role": role, "stream": stream}
-            # response = requests.post(f"{self.base_url}/api/agents/{agent_id}/messages", json=data, headers=self.headers)
-            # return UserMessageResponse(**response.json())
-
-    timestamp_processed = time.time()
-    #response_message = f"Processing message with ID: {request_id}"
-    response_message = assistant_messages(message_details)
-    # # Example processing with all required data
-    processed_result = {
-        "request_id": request_id,
-        "incoming_message": incoming_message,
-        "response_message": response_message,
-        "inner_monologue": None,
-        "server_url_secret": server_url_secret,
-        "user_api_key": user_api_key,
-        "agent_id": agent_id,
-        "timestamp_created": timestamp_created,
-        "timestamp_processed" :timestamp_processed,
-        "vapi_response": create_vapi_response(response_message,request_id=request_id, timestamp=timestamp_processed)
-    }
-
-
-
-    return processed_result
-
-
-# async def extract_request_data(request: Request):
-#     """Extracts necessary data from the incoming request.
-
-#     Args:
-#         request (Request): The incoming FastAPI request object.
-
-#     Returns:
-#         tuple: A tuple containing user_api_key, default_agent_id, and latest_message.
-
-#     Raises:
-#         HTTPException: If any required data is missing or in an invalid format.
-#     """
-#     # Extract the full incoming request data
-#     incoming_request_data = await request.json()
-#     logging.info(f'Full incoming request data: {incoming_request_data}')
-
-#     # Extract serverUrlSecret
-#     try:
-#         server_url_secret = incoming_request_data['call']['serverUrlSecret']
-#         logging.info(f'Extracted serverUrlSecret: {server_url_secret}')
-#     except KeyError as e:
-#         logging.error(f'serverUrlSecret not found in the expected call configuration: {str(e)}')
-#         raise HTTPException(status_code=400, detail="serverUrlSecret is missing from the call configuration")
-
-#     # Split serverUrlSecret into user API key and default agent ID
-#     try:
-#         user_api_key, default_agent_id = server_url_secret.split(':')
-#         logging.info(f'Extracted user API key: {user_api_key} and default agent ID: {default_agent_id}')
-#     except ValueError:
-#         logging.error("Invalid serverUrlSecret format. Expected format 'user_api_key:default_agent_id'")
-#         raise HTTPException(status_code=400, detail="Invalid serverUrlSecret format")
-
-#     # Extract the latest message
-#     try:
-#         latest_message = incoming_request_data['messages'][-1]['content']
-#         logging.info(f'Latest message from Vapi: {latest_message}')
-#     except (KeyError, IndexError, TypeError) as e:
-#         logging.error("Failed to extract the latest message due to improper data structure.")
-#         raise HTTPException(status_code=400, detail=f"Error in message data: {str(e)}")
-
-#     return server_url_secret, user_api_key, default_agent_id, latest_message
-
-
-import hashlib
-import logging
-from fastapi import Request, HTTPException
-
-async def extract_request_data(request: Request):
-    """Extracts necessary data from the incoming request and generates a unique hash.
-
-    Args:
-        request (Request): The incoming FastAPI request object.
-
-    Returns:
-        tuple: A tuple containing server_url_secret, user_api_key, default_agent_id, latest_message, and unique_hash.
-
-    Raises:
-        HTTPException: If any required data is missing or in an invalid format.
-    """
-    # Extract the full incoming request data
-    incoming_request_data = await request.json()
-    logging.info(f'Full incoming request data: {incoming_request_data}')
-
-    # Extract serverUrlSecret
-    try:
-        server_url_secret = incoming_request_data['call']['serverUrlSecret']
-        logging.info(f'Extracted serverUrlSecret: {server_url_secret}')
-    except KeyError as e:
-        logging.error(f'serverUrlSecret not found in the expected call configuration: {str(e)}')
-        raise HTTPException(status_code=400, detail="serverUrlSecret is missing from the call configuration")
-
-    # Split serverUrlSecret into user API key and default agent ID
-    try:
-        user_api_key, default_agent_id = server_url_secret.split(':')
-        logging.info(f'Extracted user API key: {user_api_key} and default agent ID: {default_agent_id}')
-    except ValueError:
-        logging.error("Invalid serverUrlSecret format. Expected format 'user_api_key:default_agent_id'")
-        raise HTTPException(status_code=400, detail="Invalid serverUrlSecret format")
-
-    # Extract the latest message
-    try:
-        latest_message = incoming_request_data['messages'][-1]['content']
-        logging.info(f'Latest message from Vapi: {latest_message}')
-    except (KeyError, IndexError, TypeError) as e:
-        logging.error("Failed to extract the latest message due to improper data structure.")
-        raise HTTPException(status_code=400, detail=f"Error in message data: {str(e)}")
-
-    # Generate a unique hash based on the callId and concatenated message content
-    try:
-        call_id = incoming_request_data['call']['callId'] #this might get regenerated on reconnect
-        
-        # Truncate the last two messages to reduce duplicate risk
-        truncated_messages = incoming_request_data['messages'][:0]  # Excluding the last two messages
-
-        # Concatenate the truncated message contents for hashing
-        message_content = ''.join(msg['content'] for msg in truncated_messages)
-
-        # Create a unique hash using SHA-256
-        unique_hash = hashlib.sha256(message_content.encode()).hexdigest()
-
-        logging.info(f'Generated unique hash: {unique_hash}')
-    except KeyError:
-        logging.error("Failed to generate unique hash due to missing callId or messages.")
-        raise HTTPException(status_code=400, detail="Error generating unique hash")
-
-    return server_url_secret, user_api_key, default_agent_id, latest_message, unique_hash
-
-
-
-async def stream_all_responses_chunked(request_id: str, server_url_secret: Optional[str] = None):
-
-    """Stream all processed responses from Redis until the specific `request_id` is found.
-    optional filter by server_url_secret"""
-
-    max_retries = 1000  # Maximum retries before exiting the loop
-    retries = 0  # Track the number of retries
-
-    while retries < max_retries:
-        print(retries,end=' ')
-        response_ids = await vapi_app.redis.keys("responses:*")  # Get all response keys
-        
-        found_request_id = False  # Flag to determine if request_id is found
-        
-        # Process each key and yield responses
-        for response_id in response_ids:
-            responses = await vapi_app.redis.lrange(response_id, 0, -1)
-            
-            for response_data in responses:
-                response = json.loads(response_data)
-                if "timestamp_processed" in response:   
-                    logging.info(f'Found response with request_id: {request_id}. Yielding chunk to output streamgenerator: {response["vapi_response"]}')
-                    yield f"data: {response['vapi_response']}\n\n"  # Yield the response data
-                    
-                    
-                    # Check if this response has the specific request_id
-                    if response_id.endswith(f":{request_id}"):
-                        found_request_id = True
-                    
-                    # Remove the response after yielding
-                    await vapi_app.redis.lrem(response_id, 1, json.dumps(response))
-        
-        if found_request_id:
-            break  # Exit loop if the specific request_id is found
-        
-        retries += 1  # Increment retries if no data is found
-        await asyncio.sleep(.1)  # Throttle re-checks to avoid busy-waiting
-
-
-def create_vapi_response(message, request_id=None, timestamp=None, end_of_conversation=False):
-    # Generate UUID for response_id if not provided
-    if request_id is None:
-        request_id = str(uuid.uuid4())
-    
-    # Use current time for timestamp if not provided
-    if timestamp is None:
-        timestamp = int(time.time())
-
-    # Construct the response object
-    response = {
-        "id": request_id,
-        "choices": [
-            {
-                "delta": {
-                    "content": message,
-                    "function_call": None,
-                    "role": None,
-                    "tool_calls": None
-                },
-                "finish_reason": "stop" if end_of_conversation else None,
-                "index": 0,
-                "logprobs": None
-            }
-        ],
-        "created": timestamp,
-        "model": "memgpt-custom-model",
-        "object": "chat.completion.chunk",
-        "system_fingerprint": None
-    }
-    
-    # Convert to JSON and add data prefix for streaming
-    json_data = json.dumps(response)
-    return json_data
-
-@vapi_app.get("/test")
-async def test_endpoint():
-    return {"message": "Hello, world!"}
-
-@vapi_app.post("/api")
+vapi_app = FastAPI()
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_BASE = "https://api.openai.com/v1/chat/completions"
+
+# MemGPT Configuration
+MEMGPT_BASE_URL = "http://localhost:8080"
+MEMGPT_AGENT_ID = "39efded6-74e6-420a-9aed-151720e97c2e"  # Replace with your actual agent ID
+MEMGPT_TOKEN = "sk-8cc1b14f04ea1d13061022ae19648d57340d37b864e29740"  # Replace with your actual token
+
+
+VAPI_API_BASE_URL = os.getenv("VAPI_API_BASE_URL", "https://api.vapi.ai")
+VAPI_API_KEY = os.getenv("VAPI_API_KEY")
+# Constants for different call types
+WEB_CALL = "webCall"
+INBOUND_PHONE_CALL = "inboundPhoneCall"
+OUTBOUND_PHONE_CALL = "outboundPhoneCall"
+
+# JSON schemas for different call types
+WEB_CALL_SCHEMA = {
+    "model": str,
+    "messages": list,
+    "temperature": float,
+    "stream": bool,
+    "max_tokens": int,
+    "call": {
+        "id": str,
+        "orgId": str,
+        "createdAt": str,
+        "updatedAt": str,
+        "type": str,
+        "status": str,
+        "assistantId": str,
+        "webCallUrl": str
+    },
+    "metadata": dict
+}
+
+PHONE_CALL_SCHEMA = {
+    "model": str,
+    "messages": list,
+    "temperature": float,
+    "stream": bool,
+    "max_tokens": int,
+    "call": {
+        "id": str,
+        "orgId": str,
+        "createdAt": str,
+        "updatedAt": str,
+        "type": str,
+        "status": str,
+        "phoneCallProvider": str,
+        "phoneCallProviderId": str,
+        "phoneCallTransport": str,
+        "phoneNumberId": str,
+        "assistantId": str,
+        "customer": {
+            "number": str
+        }
+    },
+    "phoneNumber": {
+        "id": str,
+        "orgId": str,
+        "assistantId": str,
+        "number": str,
+        "createdAt": str,
+        "updatedAt": str,
+        "stripeSubscriptionId": str,
+        "stripeSubscriptionStatus": str,
+        "stripeSubscriptionCurrentPeriodStart": str,
+        "name": str,
+        "provider": str
+    },
+    "customer": {
+        "number": str
+    },
+    "metadata": dict
+}
+
+# Initialize MemGPT RESTClient
+memgpt_client = RESTClient(base_url=MEMGPT_BASE_URL, token=MEMGPT_TOKEN, debug=True)
+
+# Initialize the VAPIClient
+vapi_client = VAPIClient()
+
+def normalize_phone_number(phone_number: str) -> str:
+    """Remove all non-digit characters from the phone number."""
+    return re.sub(r'\D', '', phone_number)
+
+def mask_api_key(api_key: str) -> str:
+    """Mask the API key for safe logging."""
+    if api_key:
+        return f"{api_key[:4]}...{api_key[-4:]}"
+    return None
+
+# In-memory cache for user data
+user_cache: Dict[str, Dict] = {}
+CACHE_EXPIRY = 3600  # Cache expiry in seconds (1 hour)
+
+
+@vapi_app.post("/vapi/memgpt/chat/completions")
 async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Header(None)):
-    if not x_vapi_secret:
-        logging.error("x-vapi-secret header is missing")
-        # Log all headers for debugging
-        headers = dict(request.headers)
-        logging.debug(f"All received headers: {headers}")
-        raise HTTPException(status_code=400, detail="x-vapi-secret header missing")
-
-    # Parse the x-vapi-secret to obtain the memgpt_user_api_key and default_agent_key
-    try:
-        memgpt_user_api_key, default_agent_key = x_vapi_secret.split(':')
-    except ValueError:
-        logging.error("Invalid x-vapi-secret format")
-        raise HTTPException(status_code=400, detail="Invalid x-vapi-secret format")
-
-    logging.info(f"User API Key: {memgpt_user_api_key}, Agent ID: {default_agent_key}")
-
+    logging.info("Entering vapi_call_handler")
     incoming_request_data = await request.json()
-    logging.debug(f"Incoming data: {incoming_request_data}")
-    #TBD: build out call end data handler, etc. here
+    
+    call_id = incoming_request_data['call']['id']
+    call_type = incoming_request_data['call'].get('type')
+    phone_number = incoming_request_data['customer']['number']
 
+    logging.info(f"Call ID: {call_id}, Call Type: {call_type}, Phone: {phone_number}")
 
-@vapi_app.post("/stream-test")
-async def receive_and_stream_voice_input(request: Request):
-    data = await request.json()  # Get the JSON from the request
-    user_id = str(uuid.uuid4())  # Generate a user ID
-    # Correctly encode the entire data dictionary as JSON
-    message_data = json.dumps({'data': data, 'user_id': user_id})
+    if call_id in user_cache and user_cache[call_id]['expiry'] > time.time():
+        cached_data = user_cache[call_id]
+        memgpt_user_api_key = cached_data['memgpt_user_api_key']
+        default_agent_key = cached_data['default_agent_key']
+        logging.info(f"Using cached data for call {call_id}")
+    else:
+        logging.info(f"Cache miss. Looking up user data for phone number: {phone_number}")
+        conn = create_connection()
+        user_data = get_user_data_by_field(conn, 'phone', normalize_phone_number(phone_number))
+        close_connection(conn)
+        
+        if not user_data:
+            logging.error(f"User data not found for phone number: {phone_number}")
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        memgpt_user_api_key = user_data['memgpt_user_api_key']
+        default_agent_key = user_data['default_agent_key']
+        
+        user_cache[call_id] = {
+            'memgpt_user_api_key': memgpt_user_api_key,
+            'default_agent_key': default_agent_key,
+            'expiry': time.time() + CACHE_EXPIRY
+        }
+        logging.info(f"Cached user data for call {call_id}")
 
-    logger.info(f"Received voice input: {data} for user ID: {user_id}")
-    """Submit a new request and initiate SSE streaming for processed responses."""
-    request_id = await queue_request(data)
-    logger.info(f"Request ID: {request_id} queued for user ID:{user_id}")
-    #return StreamingResponse(stream_all_responses(), media_type="text/event-stream")
-    return StreamingResponse(stream_all_responses_chunked(request_id=request_id),media_type="text/event-stream")
-
-
-@vapi_app.post("/memgpt-sse/chat/completions")
-async def custom_memgpt_sse_handler(request: Request):
     try:
-        server_url_secret, user_api_key, agent_id, latest_message, unique_hash = await extract_request_data(request)
-        request_id = await queue_request(server_url_secret, user_api_key, agent_id, latest_message, unique_hash)
-        logging.info(f"Received request - User API Key: {user_api_key}, Agent ID: {agent_id}, Latest Message: {latest_message}, Request ID: {request_id}")
-        return StreamingResponse(stream_all_responses_chunked(request_id, server_url_secret), media_type="text/event-stream")
-    except HTTPException as he:
-        logging.error(f"Failed to extract request data: {he}")
-        raise he
+        return await process_call(incoming_request_data, memgpt_user_api_key, default_agent_key)
+    except Exception as e:
+        logging.error(f"Error processing call: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing call: {str(e)}")
+# Global variables to store ongoing conversations and their last messages
+ongoing_conversations: Dict[str, Dict] = {}
 
-
-
-
-
-
-
-# async def process_request_dummy(req_data):
-#     """Simulate processing a request with backend logic."""
-
-#     # Simulate processing time
-#     time.sleep(2)
+async def process_call(request_data: dict, user_api_key: str, agent_id: str):
+    logger.info(f"Processing call for Agent ID: {agent_id}")
     
-#     # Add a timestamp to indicate when the processing was completed
-#     timestamp_processed = time.time()
-    
-#     # Create a copy of the original data and add the timestamp
-#     response = req_data.copy()
-#     response["timestamp_processed"] = timestamp_processed
-#     response["response_message"] = f"Processed message with Request ID {req_data.get('request_id')}"
-    
-#     logging.info("Request processing completed.")
+    call_id = request_data['call']['id']
+    latest_message = request_data['messages'][-1]['content']
+    updated_at = request_data['call']['updatedAt']
 
-#     return response
+    # Update MemGPT client with user-specific data
+    global memgpt_client
+    memgpt_client = RESTClient(base_url=MEMGPT_BASE_URL, token=user_api_key, debug=True)
+
+    logger.info(f"Preparing to stream response for call ID: {call_id}, Updated At: {updated_at}")
+
+    response = StreamingResponse(
+        stream_memgpt_response(agent_id, latest_message, call_id, updated_at),
+        media_type="text/event-stream"
+    )
+    logger.info("Created StreamingResponse object")
+    
+    return response
+
+async def stream_memgpt_response(agent_id: str, message: str, call_id: str, updated_at: str) -> AsyncGenerator[str, None]:
+    global ongoing_conversations
+    logger.info(f"Starting stream_memgpt_response for call ID: {call_id}")
+    
+    current_time = datetime.now()
+
+    # Check if this is an ongoing conversation
+    if call_id in ongoing_conversations:
+        conversation = ongoing_conversations[call_id]
+        if message == conversation['last_message']:
+            # This is a repeat of the last message, likely due to a reconnection
+            logger.info(f"Repeat message detected for call ID: {call_id}")
+            for chunk in conversation['last_response']:
+                yield chunk
+            return
+        else:
+            # This is a new message in an ongoing conversation
+            logger.info(f"New message in ongoing conversation for call ID: {call_id}")
+    else:
+        # This is a new conversation
+        logger.info(f"New conversation started for call ID: {call_id}")
+        ongoing_conversations[call_id] = {'last_message': '', 'last_response': [], 'timestamp': current_time}
+
+    try:
+        logger.info(f"Sending user message to MemGPT for agent ID: {agent_id}")
+        response = memgpt_client.user_message(agent_id, message)
+        
+        logger.info("Received response from MemGPT. Processing message.")
+        full_content = ""
+        stored_response = []
+
+        for chunk in response.messages:
+            logger.info(f"Processing chunk: {chunk}")
+            
+            if isinstance(chunk, dict) and 'function_call' in chunk:
+                if chunk['function_call']['name'] == 'send_message':
+                    try:
+                        content = json.loads(chunk['function_call']['arguments'])['message']
+                        full_content += content
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.error(f"Error processing chunk: {e}")
+
+        if full_content:
+            logger.info(f"Extracted full content: {full_content[:100]}...")  # Log first 100 chars
+            response_chunk = f"data: {json.dumps({'choices': [{'delta': {'content': full_content}}]})}\n\n"
+            stored_response.append(response_chunk)
+            yield response_chunk
+
+        done_chunk = "data: [DONE]\n\n"
+        stored_response.append(done_chunk)
+        yield done_chunk
+        logger.info("Sent [DONE] signal")
+
+        # Update the conversation record
+        ongoing_conversations[call_id] = {
+            'last_message': message,
+            'last_response': stored_response,
+            'timestamp': current_time
+        }
+
+        # Clean up old conversations (e.g., conversations inactive for more than 1 hour)
+        ongoing_conversations = {k: v for k, v in ongoing_conversations.items() 
+                                 if current_time - v['timestamp'] < timedelta(hours=1)}
+    
+    except Exception as e:
+        logger.error(f"Error in stream_memgpt_response: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+    logger.info(f"Exiting stream_memgpt_response for call ID: {call_id}")    
+
+async def stream_openai_response(messages: list) -> AsyncGenerator[str, None]:
+    async with httpx.AsyncClient() as client:
+        async with client.stream(
+            "POST",
+            OPENAI_API_BASE,
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": messages,
+                "stream": True,
+            },
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=None,
+        ) as response:
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    yield line + "\n\n"
+
+# Deprecated: Vapi doesn't seem to store metadata for Calls, only Asisstants or Accounts
+# async def update_call_metadata(call_id: str, metadata: Dict):
+#     try:
+#         url = f"{vapi_client.base_url}/call/{call_id}"
+#         payload = {
+#             "metadata": metadata
+#         }
+#         headers = await vapi_client.get_headers()
+        
+#         logging.info(f"Updating call {call_id} metadata")
+#         logging.debug(f"Request URL: {url}")
+#         logging.debug(f"Request payload: {payload}")
+        
+#         async with httpx.AsyncClient() as client:
+#             response = await client.patch(url, json=payload, headers=headers)
+#             response.raise_for_status()
+#             logging.info(f"Successfully updated call {call_id} metadata")
+#             return response.json()
+#     except httpx.HTTPStatusError as e:
+#         error_detail = f"HTTP error occurred: {e.response.status_code} {e.response.reason_phrase}"
+#         if e.response.text:
+#             error_detail += f"\nResponse content: {e.response.text}"
+#         logging.error(error_detail)
+#         logging.error(f"Request URL: {url}")
+#         logging.error(f"Request payload: {payload}")
+#         raise HTTPException(status_code=500, detail=f"Failed to update call metadata: {error_detail}")
+#     except Exception as e:
+#         logging.error(f"Unexpected error updating call metadata: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    
+# async def update_call_server_url_secret(call_id: str, server_url_secret: str):
+#     try:
+#         url = f"{vapi_client.base_url}/call/{call_id}"
+#         payload = {
+#             "serverUrlSecret": server_url_secret
+#         }
+#         headers = await vapi_client.get_headers()
+        
+#         logging.info(f"Updating call {call_id} with serverUrlSecret")
+#         logging.debug(f"Request URL: {url}")
+#         logging.debug(f"Request payload: {payload}")
+        
+#         async with httpx.AsyncClient() as client:
+#             response = await client.patch(url, json=payload, headers=headers)
+#             response.raise_for_status()
+#             logging.info(f"Successfully updated call {call_id}")
+#             return response.json()
+#     except httpx.HTTPStatusError as e:
+#         error_detail = f"HTTP error occurred: {e.response.status_code} {e.response.reason_phrase}"
+#         if e.response.text:
+#             error_detail += f"\nResponse content: {e.response.text}"
+#         logging.error(error_detail)
+#         logging.error(f"Request URL: {url}")
+#         logging.error(f"Request payload: {payload}")
+#         raise HTTPException(status_code=500, detail=f"Failed to update call: {error_detail}")
+#     except Exception as e:
+#         logging.error(f"Unexpected error updating call serverUrlSecret: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@vapi_app.get("/vapi/test")
+async def test_endpoint():
+    return {"message": "Hello, Vapi world!"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(vapi_app, host="0.0.0.0", port=9090)
+
