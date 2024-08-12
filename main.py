@@ -51,11 +51,13 @@ from ella_memgpt.memgpt_admin import create_memgpt_user_and_api_key, manage_agen
 
 from ella_vapi.vapi_client import VAPIClient
 from ella_dbo.db_manager import (
-    create_connection,
-    create_table,
+    get_db_connection,
     get_user_data_by_field,
-    upsert_user
+    upsert_user,
+    initialize_database
 )
+from ella_dbo.db_manager import get_db_connection, get_user_data_by_field
+import os
 
 
 from agent_creation import handle_default_agent, update_custom_tools
@@ -75,7 +77,14 @@ DEFAULT_AGENT_ID = os.getenv("DEFAULT_AGENT_ID", "000000")
 
 CHATBOT_NAME = "Ella AI"
 
-
+@app.on_event("startup")
+async def startup_event():
+    try:
+        logging.info("Attempting to initialize the database...")
+        initialize_database()
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+        raise  # This will prevent the app from starting if database initialization fails
 
 @app.get("/voice-chat")
 async def new_test_page():
@@ -146,6 +155,8 @@ def update_agent_memory(base_url: str, memgpt_user_api_key: str, default_agent_k
 
     update_custom_tools(user_api)
 
+
+
 @cl.oauth_callback
 async def oauth_callback(
     provider_id: str,
@@ -160,150 +171,288 @@ async def oauth_callback(
     user_roles = raw_user_data.get("https://ella-ai/auth/roles", ["none"])
     roles_str = ", ".join(user_roles)
 
-    # Database operations
-    conn = create_connection()
-    create_table(conn)
+    # Initialize variables
+    memgpt_user_id = None
+    memgpt_user_api_key = None
+    default_agent_key = None
+    vapi_assistant_id = None
+    calendar_id = None
+    local_timezone = 'America/Los_Angeles'
+    phone = None
+    email = user_email  # Initialize email with user_email from raw_user_data
 
-    # Retrieve user data including the new fields
+    # Retrieve user data
     try:
-        user_data = get_user_data_by_field(conn, 'auth0_user_id', auth0_user_id)
+        user_data = get_user_data_by_field('auth0_user_id', auth0_user_id)
         if user_data:
-            memgpt_user_id = user_data.get('memgpt_user_id', None)
-            memgpt_user_api_key = user_data.get('memgpt_user_api_key', None)
-            email = user_data.get('email', None)
-            phone = user_data.get('phone', None)
-            default_agent_key = user_data.get('default_agent_key', None)
-            vapi_assistant_id = user_data.get('vapi_assistant_id', None)
-            calendar_id = user_data.get('calendar_id', None)
-            local_timezone = user_data.get('local_timezone', 'America/Los_Angeles')  # Add this line
+            memgpt_user_id = user_data.get('memgpt_user_id')
+            memgpt_user_api_key = user_data.get('memgpt_user_api_key')
+            email = user_data.get('email') or email
+            phone = user_data.get('phone')
+            default_agent_key = user_data.get('default_agent_key')
+            vapi_assistant_id = user_data.get('vapi_assistant_id')
+            calendar_id = user_data.get('calendar_id')
+            local_timezone = user_data.get('local_timezone', 'America/Los_Angeles')
         else:
-            # Handle the case where no data is found
-            print("No user data found for the provided ID")
-            memgpt_user_id = None
-            memgpt_user_api_key = None
-            email = None
-            phone = None
-            default_agent_key = None
-            vapi_assistant_id = None
-            calendar_id = None
-            local_timezone = 'America/Los_Angeles'  # Add this line, using default value
-        
-        logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: "
-                    f"MemGPT User ID = {memgpt_user_id}, "
-                    f"API Key = {memgpt_user_api_key}, "
-                    f"Email = {email}, "
-                    f"Phone = {phone}, "
-                    f"Default Agent Key = {default_agent_key}, "
-                    f"VAPI Assistant ID = {vapi_assistant_id}, "
-                    f"Calendar ID = {calendar_id}, "
-                    f"Local Timezone = {local_timezone}")  # Add this line
+            logging.warning(f"No user data found for Auth0 user ID: {auth0_user_id}")
     except Exception as e:
         logging.error(f"Failed to retrieve user data for Auth0 user ID {auth0_user_id}: {e}")
 
     # MemGPT and VAPI Assistant Setup
-    if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id or not default_agent_key:
-        admin_api = AdminRESTClient(BASE_URL, master_api_key)
+    admin_api = AdminRESTClient(BASE_URL, master_api_key)
 
-        if not memgpt_user_id:
-            # Create MemGPT user
+    if not memgpt_user_id:
+        try:
             memgpt_user = admin_api.create_user()
             memgpt_user_id = str(memgpt_user.user_id)
             memgpt_user_api_key = memgpt_user.api_key
             logging.info(f"New memgpt user created: {memgpt_user_id}")
+        except Exception as e:
+            logging.error(f"Failed to create MemGPT user: {e}")
 
-        if not memgpt_user_api_key:
-            # Create MemGPT API key
+    if not memgpt_user_api_key and memgpt_user_id:
+        try:
             memgpt_user_api_key = admin_api.create_key(memgpt_user_id)
             logging.info(f"New memgpt API key created: {memgpt_user_api_key}")
+        except Exception as e:
+            logging.error(f"Failed to create MemGPT API key: {e}")
 
-        if not default_agent_key:
-            # Check for default agent
+    if not default_agent_key and memgpt_user_id and memgpt_user_api_key:
+        try:
             user_api = ExtendedRESTClient(BASE_URL, memgpt_user_api_key, debug)
             default_agent_key, agent_state = handle_default_agent(memgpt_user_id, user_api)
             logging.info(f"Default agent key: {default_agent_key}")
-            
-            # Print out the LLM config
-            llm_config = agent_state.llm_config
-            logging.info(f"LLM Config for agent {default_agent_key}:")
-            logging.info(json.dumps(llm_config.__dict__, indent=2))
+        except Exception as e:
+            logging.error(f"Failed to handle default agent: {e}")
 
+    if not vapi_assistant_id:
+        vapi_assistant_id = os.getenv('VAPI_DEFAULT_ASSISTANT_ID')
+        logging.info(f"Using default VAPI Assistant ID: {vapi_assistant_id}")
 
-        if not vapi_assistant_id:
-                # Set assistant ID to the default one from environment
-            vapi_assistant_id = os.getenv('VAPI_DEFAULT_ASSISTANT_ID')
-            
-            logging.info(f"Using default VAPI Assistant ID: {vapi_assistant_id}")
-            # Create VAPI Assistant using the VAPIClient and a preset template
-            # vapi_client = VAPIClient()
-            # preset_name = 'asteria'  # Example preset name
-            # customizations = {"serverUrlSecret": str(memgpt_user_api_key)+':'+str(default_agent_key)}
-            # vapi_assistant_response = await vapi_client.create_assistant(preset_name, customizations)
-            # vapi_assistant_id = vapi_assistant_response.get('id')  # Extract the 'id' from the response
-            # await vapi_client.close()
-            # logging.info(f"VAPI Assistant created with ID: {vapi_assistant_id}")
+    if not phone:
+        phone = get_phone_from_email(email) if email else None
 
-    # Check and update email and phone if necessary
-    if not email and user_email is not None:
-        email = user_email
-        logging.info(f"Retrieved email from user data: {email}")
+    # Update the user data in the memgpt core memory
+    if memgpt_user_api_key and default_agent_key and memgpt_user_id:
+        try:
+            update_agent_memory(BASE_URL, memgpt_user_api_key, default_agent_key, memgpt_user_id)
+        except Exception as e:
+            logging.error(f"Failed to update agent memory: {e}")
 
-    if not phone:  # Check environment variable for a matching email-phone pair
-        env_phone = get_phone_from_email(email)  # Assuming environment variables are named after emails
-        logging.info(f"Retrieved phone number from environment variable: {env_phone}")
-        phone = env_phone if env_phone else None
-
-    # Update the user data in the memgpt core memory to include the user_id for handling calanedars etc. 
-    update_agent_memory(BASE_URL, memgpt_user_api_key, default_agent_key, memgpt_user_id)
-
+    # Upsert user data
     try:
-        # Log the data before the upsert operation
-        logging.info(f"Preparing to upsert data for Auth0 user ID {auth0_user_id}: "
-                    f"Roles: {roles_str}, Email: {email}, Phone: {phone}, "
-                    f"Name: {user_name}, MemGPT User ID: {memgpt_user_id}, "
-                    f"MemGPT API Key: {memgpt_user_api_key}, Default Agent Key: {default_agent_key}, "
-                    f"VAPI Assistant ID: {vapi_assistant_id}, Local Timezone: {local_timezone}")
-        
-        # Upsert the updated user data into the database
-        upsert_user(
-            conn,
-            "auth0_user_id",
-            auth0_user_id,
-            roles=roles_str,
-            email=email,
-            phone=phone,
-            name=user_name,
-            memgpt_user_id=memgpt_user_id,
-            memgpt_user_api_key=memgpt_user_api_key,
-            default_agent_key=default_agent_key,
-            vapi_assistant_id=vapi_assistant_id,
-            calendar_id=calendar_id,
-            local_timezone=local_timezone  # Add this line
-        )
+        with get_db_connection() as conn:
+            upsert_user(
+                conn,
+                "auth0_user_id",
+                auth0_user_id,
+                roles=roles_str,
+                email=email,
+                phone=phone,
+                name=user_name,
+                memgpt_user_id=memgpt_user_id,
+                memgpt_user_api_key=memgpt_user_api_key,
+                default_agent_key=default_agent_key,
+                vapi_assistant_id=vapi_assistant_id,
+                calendar_id=calendar_id,
+                local_timezone=local_timezone
+            )
         logging.info("Upsert operation completed successfully.")
     except Exception as e:
         logging.error(f"Database error during upsert: {e}")
-    finally:
-        conn.close()
-        logging.info("Database connection closed.")
 
-        # Create and return the custom user object
-        custom_user = cl.User(
-            identifier=user_name,
-            metadata={
-                "auth0_user_id": auth0_user_id,
-                "email": email,
-                "name": user_name,
-                "roles": user_roles,
-                "memgpt_user_id": str(memgpt_user_id),
-                "memgpt_user_api_key": str(memgpt_user_api_key),
-                "default_agent_key": str(default_agent_key),
-                "vapi_assistant_id": str(vapi_assistant_id),
-                "phone": phone,
-                "calendar_id": calendar_id,
-                "local_timezone": local_timezone  # Add this line
-            }
-        )
-        return custom_user
+
+    # Create and return the custom user object
+    custom_user = cl.User(
+        identifier=user_name or auth0_user_id,  # Fallback to auth0_user_id if user_name is None
+        metadata={
+            "auth0_user_id": auth0_user_id,
+            "email": email,
+            "name": user_name,
+            "roles": user_roles,
+            "memgpt_user_id": str(memgpt_user_id) if memgpt_user_id else None,
+            "memgpt_user_api_key": str(memgpt_user_api_key) if memgpt_user_api_key else None,
+            "default_agent_key": str(default_agent_key) if default_agent_key else None,
+            "vapi_assistant_id": str(vapi_assistant_id) if vapi_assistant_id else None,
+            "phone": phone,
+            "calendar_id": calendar_id,
+            "local_timezone": local_timezone
+        }
+    )
+    return custom_user
+# @cl.oauth_callback
+# async def oauth_callback(
+#     provider_id: str,
+#     token: str,
+#     raw_user_data: Dict[str, Any],
+#     default_user: cl.User,
+# ) -> Optional[cl.User]:
+#     # Extract user info from raw_user_data
+#     auth0_user_id = raw_user_data.get("sub", "Unknown ID")
+#     user_email = raw_user_data.get("email", None)
+#     user_name = raw_user_data.get("name", None)
+#     user_roles = raw_user_data.get("https://ella-ai/auth/roles", ["none"])
+#     roles_str = ", ".join(user_roles)
+
+#     # # Database operations
+#     # conn = create_connection()
+#     # create_table(conn)
+
+#     # Retrieve user data including the new fields
+#     # try:
+#     #     user_data = get_user_data_by_field(conn, 'auth0_user_id', auth0_user_id)
+#     #     if user_data:
+#     #         memgpt_user_id = user_data.get('memgpt_user_id', None)
+#     #         memgpt_user_api_key = user_data.get('memgpt_user_api_key', None)
+#     #         email = user_data.get('email', None)
+#     #         phone = user_data.get('phone', None)
+#     #         default_agent_key = user_data.get('default_agent_key', None)
+#     #         vapi_assistant_id = user_data.get('vapi_assistant_id', None)
+#     #         calendar_id = user_data.get('calendar_id', None)
+#     #         local_timezone = user_data.get('local_timezone', 'America/Los_Angeles')  # Add this line
+#     #     else:
+#     try:
+#         with get_db_connection() as conn:
+#             user_data = get_user_data_by_field('auth0_user_id', auth0_user_id)
+#             if user_data:
+#                 # Extract user data
+#                 memgpt_user_id = user_data.get('memgpt_user_id')
+#                 memgpt_user_api_key = user_data.get('memgpt_user_api_key')
+#                 email = user_data.get('email')
+#                 phone = user_data.get('phone')
+#                 default_agent_key = user_data.get('default_agent_key')
+#                 vapi_assistant_id = user_data.get('vapi_assistant_id')
+#                 calendar_id = user_data.get('calendar_id')
+#                 local_timezone = user_data.get('local_timezone', 'America/Los_Angeles')
+#             else:
+
+#                 # Handle the case where no data is found
+#                 print("No user data found for the provided ID")
+#                 memgpt_user_id = None
+#                 memgpt_user_api_key = None
+#                 email = None
+#                 phone = None
+#                 default_agent_key = None
+#                 vapi_assistant_id = None
+#                 calendar_id = None
+#                 local_timezone = 'America/Los_Angeles'  # Add this line, using default value
+            
+#             logging.info(f"Retrieved user data for Auth0 user ID {auth0_user_id}: "
+#                         f"MemGPT User ID = {memgpt_user_id}, "
+#                         f"API Key = {memgpt_user_api_key}, "
+#                         f"Email = {email}, "
+#                         f"Phone = {phone}, "
+#                         f"Default Agent Key = {default_agent_key}, "
+#                         f"VAPI Assistant ID = {vapi_assistant_id}, "
+#                         f"Calendar ID = {calendar_id}, "
+#                         f"Local Timezone = {local_timezone}")  # Add this line
+#     except Exception as e:
+#         logging.error(f"Failed to retrieve user data for Auth0 user ID {auth0_user_id}: {e}")
+
+#     # MemGPT and VAPI Assistant Setup
+#     if not memgpt_user_id or not memgpt_user_api_key or not vapi_assistant_id or not default_agent_key:
+#         admin_api = AdminRESTClient(BASE_URL, master_api_key)
+
+#         if not memgpt_user_id:
+#             # Create MemGPT user
+#             memgpt_user = admin_api.create_user()
+#             memgpt_user_id = str(memgpt_user.user_id)
+#             memgpt_user_api_key = memgpt_user.api_key
+#             logging.info(f"New memgpt user created: {memgpt_user_id}")
+
+#         if not memgpt_user_api_key:
+#             # Create MemGPT API key
+#             memgpt_user_api_key = admin_api.create_key(memgpt_user_id)
+#             logging.info(f"New memgpt API key created: {memgpt_user_api_key}")
+
+#         if not default_agent_key:
+#             # Check for default agent
+#             user_api = ExtendedRESTClient(BASE_URL, memgpt_user_api_key, debug)
+#             default_agent_key, agent_state = handle_default_agent(memgpt_user_id, user_api)
+#             logging.info(f"Default agent key: {default_agent_key}")
+            
+#             # Print out the LLM config
+#             llm_config = agent_state.llm_config
+#             logging.info(f"LLM Config for agent {default_agent_key}:")
+#             logging.info(json.dumps(llm_config.__dict__, indent=2))
+
+
+#         if not vapi_assistant_id:
+#                 # Set assistant ID to the default one from environment
+#             vapi_assistant_id = os.getenv('VAPI_DEFAULT_ASSISTANT_ID')
+            
+#             logging.info(f"Using default VAPI Assistant ID: {vapi_assistant_id}")
+#             # Create VAPI Assistant using the VAPIClient and a preset template
+#             # vapi_client = VAPIClient()
+#             # preset_name = 'asteria'  # Example preset name
+#             # customizations = {"serverUrlSecret": str(memgpt_user_api_key)+':'+str(default_agent_key)}
+#             # vapi_assistant_response = await vapi_client.create_assistant(preset_name, customizations)
+#             # vapi_assistant_id = vapi_assistant_response.get('id')  # Extract the 'id' from the response
+#             # await vapi_client.close()
+#             # logging.info(f"VAPI Assistant created with ID: {vapi_assistant_id}")
+
+#     # Check and update email and phone if necessary
+#     if not email and user_email is not None:
+#         email = user_email
+#         logging.info(f"Retrieved email from user data: {email}")
+
+#     if not phone:  # Check environment variable for a matching email-phone pair
+#         env_phone = get_phone_from_email(email)  # Assuming environment variables are named after emails
+#         logging.info(f"Retrieved phone number from environment variable: {env_phone}")
+#         phone = env_phone if env_phone else None
+
+#     # Update the user data in the memgpt core memory to include the user_id for handling calanedars etc. 
+#     update_agent_memory(BASE_URL, memgpt_user_api_key, default_agent_key, memgpt_user_id)
+
+#     try:
+#         # Log the data before the upsert operation
+#         logging.info(f"Preparing to upsert data for Auth0 user ID {auth0_user_id}: "
+#                     f"Roles: {roles_str}, Email: {email}, Phone: {phone}, "
+#                     f"Name: {user_name}, MemGPT User ID: {memgpt_user_id}, "
+#                     f"MemGPT API Key: {memgpt_user_api_key}, Default Agent Key: {default_agent_key}, "
+#                     f"VAPI Assistant ID: {vapi_assistant_id}, Local Timezone: {local_timezone}")
+        
+#         # Upsert the updated user data into the database
+#         with get_db_connection() as conn:
+#             upsert_user(
+#                 conn,
+#                 "auth0_user_id",
+#                 auth0_user_id,
+#                 roles=roles_str,
+#                 email=email,
+#                 phone=phone,
+#                 name=user_name,
+#                 memgpt_user_id=memgpt_user_id,
+#                 memgpt_user_api_key=memgpt_user_api_key,
+#                 default_agent_key=default_agent_key,
+#                 vapi_assistant_id=vapi_assistant_id,
+#                 calendar_id=calendar_id,
+#                 local_timezone=local_timezone
+#             )
+#     except Exception as e:
+#         logging.error(f"Database error: {e}")
+#     finally:
+#         conn.close()
+#         logging.info("Database connection closed.")
+
+#         # Create and return the custom user object
+#         custom_user = cl.User(
+#             identifier=user_name,
+#             metadata={
+#                 "auth0_user_id": auth0_user_id,
+#                 "email": email,
+#                 "name": user_name,
+#                 "roles": user_roles,
+#                 "memgpt_user_id": str(memgpt_user_id),
+#                 "memgpt_user_api_key": str(memgpt_user_api_key),
+#                 "default_agent_key": str(default_agent_key),
+#                 "vapi_assistant_id": str(vapi_assistant_id),
+#                 "phone": phone,
+#                 "calendar_id": calendar_id,
+#                 "local_timezone": local_timezone  # Add this line
+#             }
+#         )
+#         return custom_user
 
 
 @cl.on_chat_start

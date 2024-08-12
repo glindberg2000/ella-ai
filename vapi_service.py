@@ -11,11 +11,7 @@ import asyncio
 from memgpt.client.client import RESTClient
 from ella_vapi.vapi_client import VAPIClient
 import uuid
-from ella_dbo.db_manager import (
-    create_connection,
-    close_connection,
-    get_user_data_by_field
-)
+from ella_dbo.db_manager import get_db_connection, get_user_data_by_field
 from datetime import datetime, timedelta
 import time
 from dateutil import parser
@@ -144,23 +140,26 @@ async def vapi_call_handler(request: Request, x_vapi_secret: Optional[str] = Hea
         logging.info(f"Using cached data for call {call_id}")
     else:
         logging.info(f"Cache miss. Looking up user data for phone number: {phone_number}")
-        conn = create_connection()
-        user_data = get_user_data_by_field(conn, 'phone', normalize_phone_number(phone_number))
-        close_connection(conn)
-        
-        if not user_data:
-            logging.error(f"User data not found for phone number: {phone_number}")
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        memgpt_user_api_key = user_data['memgpt_user_api_key']
-        default_agent_key = user_data['default_agent_key']
-        
-        user_cache[call_id] = {
-            'memgpt_user_api_key': memgpt_user_api_key,
-            'default_agent_key': default_agent_key,
-            'expiry': time.time() + CACHE_EXPIRY
-        }
-        logging.info(f"Cached user data for call {call_id}")
+        try:
+            with get_db_connection() as conn:
+                user_data = get_user_data_by_field('phone', normalize_phone_number(phone_number))
+            
+            if not user_data:
+                logging.error(f"User data not found for phone number: {phone_number}")
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            memgpt_user_api_key = user_data['memgpt_user_api_key']
+            default_agent_key = user_data['default_agent_key']
+            
+            user_cache[call_id] = {
+                'memgpt_user_api_key': memgpt_user_api_key,
+                'default_agent_key': default_agent_key,
+                'expiry': time.time() + CACHE_EXPIRY
+            }
+            logging.info(f"Cached user data for call {call_id}")
+        except Exception as e:
+            logging.error(f"Database error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     try:
         return await process_call(incoming_request_data, memgpt_user_api_key, default_agent_key)

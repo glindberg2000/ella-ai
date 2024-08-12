@@ -15,6 +15,9 @@ import json
 import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email import encoders
+from email.utils import formatdate
+import quopri
 
 
 # Add the project root to sys.path
@@ -24,131 +27,85 @@ if project_root not in sys.path:
 
 logger = logging.getLogger(__name__)
 
+from ella_dbo.db_manager import get_db_connection, get_user_data_by_field
 
 class UserDataManager:
     @staticmethod
     def get_user_data(memgpt_user_id: str) -> dict:
-        """
-        Retrieve all data for a given user.
-        
-        Args:
-            memgpt_user_id (str): The MemGPT user ID.
-        
-        Returns:
-            dict: A dictionary containing all user data.
-        """
-        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-        conn = create_connection()
+        """Retrieve all data for a given user."""
         try:
-            logging.info(f"Attempting to retrieve data for user_id: {memgpt_user_id}")
-            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-            return user_data if user_data else {}
+            with get_db_connection() as conn:
+                logging.info(f"Attempting to retrieve data for user_id: {memgpt_user_id}")
+                user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
+                return user_data if user_data else {}
         except Exception as e:
             logging.error(f"Error retrieving user data: {str(e)}", exc_info=True)
             return {}
-        finally:
-            close_connection(conn)
 
     @staticmethod
     def get_user_timezone(memgpt_user_id: str) -> str:
-        """
-        Retrieve the timezone for a given user.
-        
-        Args:
-            memgpt_user_id (str): The MemGPT user ID.
-        
-        Returns:
-            str: The user's timezone if found, 'America/Los_Angeles' as default otherwise.
-        """
-        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-        conn = create_connection()
+        """Retrieve the timezone for a given user."""
         try:
-            logging.info(f"Attempting to retrieve timezone for user_id: {memgpt_user_id}")
-            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-            if user_data and 'local_timezone' in user_data:
-                return user_data['local_timezone']
-            logging.warning(f"No timezone found for user {memgpt_user_id}. Using default: America/Los_Angeles")
-            return 'America/Los_Angeles'
+            with get_db_connection() as conn:
+                logging.info(f"Attempting to retrieve timezone for user_id: {memgpt_user_id}")
+                user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
+                if user_data and 'local_timezone' in user_data:
+                    return user_data['local_timezone']
+                logging.warning(f"No timezone found for user {memgpt_user_id}. Using default: America/Los_Angeles")
+                return 'America/Los_Angeles'
         except Exception as e:
             logging.error(f"Error retrieving user timezone: {str(e)}", exc_info=True)
             return 'America/Los_Angeles'
-        finally:
-            close_connection(conn)
 
     @staticmethod
     def get_user_email(memgpt_user_id: str) -> Optional[str]:
-        """
-        Retrieve the email for a given user.
-        
-        Args:
-            memgpt_user_id (str): The MemGPT user ID.
-        
-        Returns:
-            Optional[str]: The user's email if found, None otherwise.
-        """
-        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-        conn = create_connection()
+        """Retrieve the email for a given user."""
         try:
-            logging.info(f"Attempting to retrieve email for user_id: {memgpt_user_id}")
-            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-            if user_data and 'email' in user_data:
-                return user_data['email']
-            logging.warning(f"No email found for user {memgpt_user_id} in user_data: {user_data}")
-            default_email = "default@example.com"
-            logging.warning(f"Using default email {default_email} for user_id: {memgpt_user_id}")
-            return default_email
+            with get_db_connection() as conn:
+                logging.info(f"Attempting to retrieve email for user_id: {memgpt_user_id}")
+                user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
+                if user_data and 'email' in user_data:
+                    return user_data['email']
+                logging.warning(f"No email found for user {memgpt_user_id} in user_data: {user_data}")
+                default_email = "default@example.com"
+                logging.warning(f"Using default email {default_email} for user_id: {memgpt_user_id}")
+                return default_email
         except Exception as e:
             logging.error(f"Error retrieving user email: {str(e)}", exc_info=True)
             return None
-        finally:
-            close_connection(conn)
 
     @staticmethod
     def get_user_reminder_prefs(memgpt_user_id: str) -> Dict[str, Union[int, str]]:
-        """
-        Retrieve the default reminder preferences for a given user.
-        
-        Args:
-            memgpt_user_id (str): The MemGPT user ID.
-        
-        Returns:
-            Dict[str, Union[int, str]]: A dictionary containing 'default_reminder_time' and 'reminder_method'.
-        """
-        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-        conn = create_connection()
+        """Retrieve the default reminder preferences for a given user."""
         try:
-            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-            if user_data:
-                return {
-                    'default_reminder_time': user_data.get('default_reminder_time', 15),
-                    'reminder_method': user_data.get('reminder_method', 'email,sms')
-                }
-            return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
+            with get_db_connection() as conn:
+                user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
+                if user_data:
+                    return {
+                        'default_reminder_time': user_data.get('default_reminder_time', 15),
+                        'reminder_method': user_data.get('reminder_method', 'email,sms')
+                    }
+                return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
         except Exception as e:
             logging.error(f"Error retrieving user reminder preferences: {str(e)}", exc_info=True)
             return {'default_reminder_time': 15, 'reminder_method': 'email,sms'}
-        finally:
-            close_connection(conn)
-
 
     @staticmethod
     def get_user_phone(memgpt_user_id: str) -> Optional[str]:
-        from ella_dbo.db_manager import get_user_data_by_field, create_connection, close_connection
-        
-        conn = create_connection()
+        """Retrieve the phone number for a given user."""
         try:
-            logging.info(f"Attempting to retrieve phone number for user_id: {memgpt_user_id}")
-            user_data = get_user_data_by_field(conn, 'memgpt_user_id', memgpt_user_id)
-            if user_data and 'phone' in user_data:
-                return user_data['phone']
-            logging.warning(f"No phone number found for user {memgpt_user_id}")
-            return None
+            with get_db_connection() as conn:
+                logging.info(f"Attempting to retrieve phone number for user_id: {memgpt_user_id}")
+                user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
+                if user_data and 'phone' in user_data:
+                    return user_data['phone']
+                logging.warning(f"No phone number found for user {memgpt_user_id}")
+                return None
         except Exception as e:
             logging.error(f"Error retrieving user phone number: {str(e)}", exc_info=True)
             return None
-        finally:
-            close_connection(conn)
-          
+
+
 class GoogleAuthBase:
     def __init__(self, token_path: str, credentials_path: str, scopes: list):
         self.token_path = token_path
@@ -664,9 +621,9 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logger.error(f"Error checking reminder status: {str(e)}", exc_info=True)
             return False
 
-class GoogleEmailUtils(GoogleAuthBase):
+class GoogleEmailUtils:
     def __init__(self, token_path: str, credentials_path: str):
-        super().__init__(token_path, credentials_path, [
+        self.creds = Credentials.from_authorized_user_file(token_path, [
             "https://www.googleapis.com/auth/gmail.modify",
             "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/gmail.readonly"
@@ -684,33 +641,57 @@ class GoogleEmailUtils(GoogleAuthBase):
 
     def send_email(self, recipient_email: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
         try:
-            message = self._create_message(recipient_email, subject, body, message_id)
+            message = self._create_message(self.auth_email, recipient_email, subject, body, message_id)
             sent_message = self.service.users().messages().send(userId="me", body=message).execute()
             logger.info(f"Message sent to {recipient_email}: {sent_message['id']}")
             return {"status": "success", "message_id": sent_message['id']}
         except Exception as e:
             logger.error(f"Error sending email: {str(e)}", exc_info=True)
             return {"status": "failed", "message": str(e)}
-
-    def _create_message(self, to: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
-        message = MIMEMultipart()
-        message['to'] = to
-        message['from'] = self.auth_email
-        message['subject'] = subject
-
-        # Create the plain text part
-        text_part = MIMEText(body, 'plain')
-        # Specify the character set to ensure proper encoding
-        text_part.set_charset('utf-8')
         
-        message.attach(text_part)
+    def send_email_mime(self, mime_message: MIMEMultipart) -> Dict[str, str]:
+        try:
+            raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode('utf-8')
+            message = {'raw': raw_message}
+            sent_message = self.service.users().messages().send(userId="me", body=message).execute()
+            logger.info(f"MIME message sent: {sent_message['id']}")
+            return {"status": "success", "message_id": sent_message['id']}
+        except Exception as e:
+            logger.error(f"Error sending MIME email: {str(e)}", exc_info=True)
+            return {"status": "failed", "message": str(e)}
+
+    def _create_message(self, sender: str, to: str, subject: str, message_text: str, message_id: Optional[str] = None) -> Dict[str, str]:
+        message = MIMEMultipart('alternative')
+        message['to'] = to
+        message['from'] = sender
+        message['subject'] = subject
+        
+        # Convert line breaks to HTML <br> tags
+        html_content = message_text.replace('\n', '<br>')
+        
+        # Wrap the content in HTML tags
+        full_html = f"""
+        <html>
+          <head></head>
+          <body>
+            <p>{html_content}</p>
+          </body>
+        </html>
+        """
+        
+        # Attach parts
+        part1 = MIMEText(message_text, 'plain')
+        part2 = MIMEText(full_html, 'html')
+        message.attach(part1)
+        message.attach(part2)
 
         if message_id:
             message['In-Reply-To'] = message_id
             message['References'] = message_id
-
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+        
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
         return {'raw': raw_message}
+
 
 
 
