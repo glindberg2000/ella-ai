@@ -7,15 +7,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-
 from datetime import datetime, timezone
 from typing import Dict, Any
 import pytz
-
 import json
 import os
 import sys
+from typing import Any, Dict, Optional
 
 # Add the project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -25,8 +23,6 @@ if project_root not in sys.path:
 # Import and run setup_env
 from setup_env import setup_env
 setup_env()
-
-from typing import Any, Dict, Optional
 
 # Your secret key for signing the JWT - keep it secure and do not expose it
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -340,6 +336,30 @@ async def on_chat_start():
     #await cl.Message(content=custom_message, author=CHATBOT_NAME).send()
 
 
+# @cl.on_chat_start
+# async def on_chat_start():
+#     try:
+#         # Retrieve user data from session within main.py
+#         app_user = cl.user_session.get("user")
+#         agent_id = app_user.metadata.get("default_agent_key", DEFAULT_AGENT_ID)
+#         user_id = app_user.metadata.get("memgpt_user_id", DEFAULT_API_KEY)
+
+#         logging.info(f"Starting chat session for user {user_id} with agent {agent_id}")
+
+#         # Initialize ExtendedRESTClient and store it in the global dictionary
+#         user_api = ExtendedRESTClient(BASE_URL, user_id, DEBUG)
+#         user_clients[user_id] = user_api
+
+#         # Manage agent state using ExtendedRESTClient
+#         await user_api.manage_agent_state(agent_id, user_id)
+
+#     except Exception as e:
+#         await cl.Message(
+#             content="An error occurred while starting the chat session. Please try again.",
+#             author=CHATBOT_NAME,
+#         ).send()
+#         logging.error(f"Error during chat start: {str(e)}")
+
 # Assuming the guardian_agent_analysis function returns a string (the note) or None,
 # TBD: replace with Autogen Teachable Agent with pre prompt hook
 def guardian_agent_analysis(message_content):
@@ -448,6 +468,9 @@ async def set_starters():
         ),
     ]
 
+
+
+
 @cl.on_message
 async def on_message(message: cl.Message):
     try:
@@ -524,3 +547,78 @@ async def on_message(message: cl.Message):
             content="An error occurred while processing your request. Please try again.",
             author=CHATBOT_NAME,
         ).send()
+
+
+# @cl.on_message
+# async def on_message(message: cl.Message):
+#     try:
+#         # Retrieve user data from session within main.py
+#         app_user = cl.user_session.get("user")
+#         agent_id = app_user.metadata.get("default_agent_key", DEFAULT_AGENT_ID)
+#         user_id = app_user.metadata.get("memgpt_user_id", DEFAULT_API_KEY)
+
+#         logging.info(f"Handling message for user {user_id} with agent {agent_id}")
+
+#         # Reuse the existing ExtendedRESTClient instance from the global dictionary
+#         user_api = user_clients.get(user_id)
+#         if not user_api:
+#             # Handle the case where the client was not properly initialized
+#             raise Exception("ExtendedRESTClient not initialized in the session.")
+
+#         # Prepare and manage agent state if necessary
+#         await user_api.manage_agent_state(agent_id, user_id)
+
+#         # Prepare the message by injecting any necessary instructions or updates
+#         message_for_memgpt = message.content
+#         guardian_note = guardian_agent_analysis3(message.content)
+
+#         if guardian_note:
+#             message_for_memgpt += f"\n\n{guardian_note}"
+
+#         # Inject special instructions
+#         message_for_memgpt = user_api.inject_special_prompts(
+#             append_human_memory_updates(message_for_memgpt, user_id)
+#         )
+
+#         # Create the main step for the chatbot response
+#         root_step = cl.Step(name=CHATBOT_NAME, type="llm")
+#         root_step.input = message_for_memgpt
+#         await root_step.send()
+#         # Stream the response from the MemGPT agent
+#         async for part in user_api.send_message_to_agent_streamed(agent_id, message_for_memgpt):
+#             if part.startswith("data: "):
+#                 data_content = part[6:]
+#                 part = json.loads(data_content)
+
+#             if "internal_monologue" in part:
+#                 monologue_step = cl.Step(name="Internal Monologue", type="thought")
+#                 monologue_step.output = part["internal_monologue"]
+#                 await monologue_step.send()
+
+#             elif "function_call" in part:
+#                 func_call_step = cl.Step(name="Function Call", type="call")
+#                 func_call_step.output = str(part["function_call"])
+#                 await func_call_step.send()
+
+#             elif "function_return" in part:
+#                 func_return = f"Function Return: {part.get('function_return', 'No return value')}, Status: {part.get('status', 'No status')}"
+#                 func_return_step = cl.Step(name="Function Return", type="return")
+#                 func_return_step.output = func_return
+#                 await func_return_step.send()
+
+#             elif "assistant_message" in part:
+#                 assistant_message += part["assistant_message"]
+#                 await root_step.stream_token(part["assistant_message"])
+
+#         root_step.output = assistant_message
+#         await root_step.update()
+
+#         # Send the final message
+#         await cl.Message(content=assistant_message, author=CHATBOT_NAME).send()
+
+#     except Exception as e:
+#         logging.error(f"An error occurred: {e}")
+#         await cl.Message(
+#             content="An error occurred while processing your request. Please try again.",
+#             author=CHATBOT_NAME,
+#         ).send()

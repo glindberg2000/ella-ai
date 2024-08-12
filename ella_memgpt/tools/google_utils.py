@@ -12,6 +12,10 @@ from typing import Any, Optional, Dict, List, Tuple, Union
 import pytz
 from datetime import datetime, timedelta, timezone
 import json
+import base64
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 
 # Add the project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -688,21 +692,25 @@ class GoogleEmailUtils(GoogleAuthBase):
             logger.error(f"Error sending email: {str(e)}", exc_info=True)
             return {"status": "failed", "message": str(e)}
 
-    def _create_message(self, to, subject, body, message_id=None):
-        import base64
-        from email.mime.text import MIMEText
-
-        message = MIMEText(body)
+    def _create_message(self, to: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
+        message = MIMEMultipart()
         message['to'] = to
         message['from'] = self.auth_email
         message['subject'] = subject
+
+        # Create the plain text part
+        text_part = MIMEText(body, 'plain')
+        # Specify the character set to ensure proper encoding
+        text_part.set_charset('utf-8')
+        
+        message.attach(text_part)
+
         if message_id:
             message['In-Reply-To'] = message_id
             message['References'] = message_id
 
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
         return {'raw': raw_message}
-    
 
 
 

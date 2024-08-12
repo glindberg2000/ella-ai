@@ -8,14 +8,17 @@ import os
 import asyncio
 from functools import partial
 import base64
+import json
 import re
 from email.utils import parseaddr
 from email.header import decode_header
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from memgpt.client.client import RESTClient
-import aiosqlite
+from memgpt.client.client import RESTClient, UserMessageResponse
+from ella_memgpt.tools.google_utils import GoogleEmailUtils
+from typing import Optional, Dict, Union
+
 
 from ella_dbo.db_manager import (
     create_connection,
@@ -30,6 +33,7 @@ load_dotenv()
 base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
 master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovellms")
 GMAIL_TOKEN_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'gmail_token.json')
+GOOGLE_CREDENTIALS_PATH = os.path.join(os.getenv('CREDENTIALS_PATH', ''), 'google_api_credentials.json')
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 # Logging configuration
@@ -188,11 +192,9 @@ async def poll_gmail_notifications() -> None:
                     message_id = message["id"]
                     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
                     parsed_email = parse_email_message(msg)
-
                     if parsed_email:
                         logger.info(f"New Email - From: {parsed_email['from']}, To: {parsed_email['to']}, "
                                     f"Subject: {parsed_email['subject']}, Body: {parsed_email['body'][:100]}...")
-
                         # Only process emails not from system accounts
                         if not parsed_email['from'].endswith('@google.com'):
                             try:
@@ -201,12 +203,16 @@ async def poll_gmail_notifications() -> None:
                                 if user_data and user_data.get("default_agent_key"):
                                     default_agent_key = user_data['default_agent_key']
                                     memgpt_user_api_key = user_data['memgpt_user_api_key']
-                                    await route_reply_to_memgpt_api(parsed_email['body'], parsed_email['subject'],
-                                                                    message_id, memgpt_user_api_key, default_agent_key)
+                                    await route_reply_to_memgpt_api(
+                                        parsed_email['body'],
+                                        parsed_email['subject'],
+                                        message_id,
+                                        from_email,
+                                        memgpt_user_api_key,
+                                        default_agent_key
+                                    )
                                 else:
                                     logger.warning(f"User not found or default agent key missing for email: {from_email}")
-                            except HTTPException as http_e:
-                                logger.error(f"HTTP error processing email: {str(http_e)}")
                             except Exception as e:
                                 logger.error(f"Error processing email: {str(e)}")
 
@@ -270,23 +276,103 @@ async def read_user_by_email(email: str) -> dict:
         logging.error(f"An error occurred: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str, memgpt_user_api_key: str, agent_key: str) -> None:
+# async def route_reply_to_memgpt_api(message: str, subject: str, message_id: str, memgpt_user_api_key: str, default_agent_key: str) -> None:
+#     """
+#     Route the email reply to the MemGPT API using the RESTClient.
+#     """
+#     client = RESTClient(base_url=base_url, token=memgpt_user_api_key)
+#     formatted_message = (
+#         f"[EMAIL MESSAGE NOTIFICATION - you MUST use send_email function call if you want to reply to the thread to the user] "
+#         f"[message_id: {message_id}] "
+#         f"[subject: {subject}] "
+#         f"[message: {message}] "
+#     )
+
+#     try:
+#         response = client.user_message(agent_id=default_agent_key, message=formatted_message)
+#         logging.info(f"MemGPT API response: {response}")
+#     except Exception as e:
+#         logging.error(f"Sending message to MemGPT API failed: {str(e)}")
+
+
+
+
+
+logger = logging.getLogger(__name__)
+
+def extract_email_content(response: Union[UserMessageResponse, dict]) -> Optional[str]:
     """
-    Route the email reply to the MemGPT API using the RESTClient.
+    Extract email content from UserMessageResponse or dictionary response.
+    """
+    logger.info(f"Attempting to extract email content from response type: {type(response)}")
+    
+    if isinstance(response, UserMessageResponse):
+        messages = response.messages
+    elif isinstance(response, dict):
+        messages = response.get('messages', [])
+    else:
+        logger.error(f"Unexpected response type: {type(response)}")
+        return None
+
+    for message in messages:
+        if isinstance(message, dict) and 'function_call' in message:
+            function_call = message['function_call']
+            if function_call.get('name') == 'send_message':
+                try:
+                    arguments = json.loads(function_call['arguments'])
+                    return arguments.get('message')
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse function call arguments as JSON")
+    
+    logger.error(f"Failed to extract content. Full response: {response}")
+    return None
+
+async def route_reply_to_memgpt_api(body: str, subject: str, message_id: str, from_email: str, memgpt_user_api_key: str, agent_key: str) -> None:
+    """
+    Route the email reply to the MemGPT API for content generation, then send the email directly.
     """
     client = RESTClient(base_url=base_url, token=memgpt_user_api_key)
+    
+    # sender_name = from_email.split('@')[0].replace('.', ' ').title()
+    
     formatted_message = (
-        f"[EMAIL MESSAGE NOTIFICATION - you MUST use send_email function call if you want to reply to the thread to the user] "
+        f"[EMAIL MESSAGE NOTIFICATION - Generate a personalized reply to the following email] "
         f"[message_id: {message_id}] "
         f"[subject: {subject}] "
-        f"[message: {message}] "
+        f"[from email address: {from_email}] "
+        f"[message: {body}] "
+        f"Please generate a thoughtful reply to this email. Address the sender by their real name, not email name, and respond directly to their question or comment. Do not include a subject line or any email sending instructions in your reply."
     )
 
     try:
         response = client.user_message(agent_id=agent_key, message=formatted_message)
-        logging.info(f"MemGPT API response: {response}")
+        logger.info(f"MemGPT API response received: {response}")
+
+        email_content = extract_email_content(response)
+
+        if email_content:
+            reply_subject = f"Re: {subject}"
+
+            email_utils = GoogleEmailUtils(GMAIL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+            result = email_utils.send_email(
+                recipient_email=from_email,
+                subject=reply_subject,
+                body=email_content,
+                message_id=message_id
+            )
+
+            if result['status'] == 'success':
+                logger.info(f"Reply email sent successfully. Message ID: {result['message_id']}")
+            else:
+                logger.error(f"Failed to send reply email: {result['message']}")
+        else:
+            logger.error("Failed to extract email content from LLM response")
+
     except Exception as e:
-        logging.error(f"Sending message to MemGPT API failed: {str(e)}")
+        logger.error(f"Error in processing or sending reply email: {str(e)}", exc_info=True)
+
+# ... (keep the rest of the code as is)
+# ... (keep the rest of the code as is)
 
 @asynccontextmanager
 async def gmail_app_lifespan(app: FastAPI):
