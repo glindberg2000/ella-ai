@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize the MemGPTEmailRouter
-email_router = MemGPTEmailRouter(base_url, GMAIL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
+email_router = MemGPTEmailRouter()
 
 async def decode_email_content(raw_message: str) -> str:
     try:

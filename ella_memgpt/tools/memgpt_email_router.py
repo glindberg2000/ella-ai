@@ -1,23 +1,44 @@
 # File: memgpt_email_router.py
-
+import os
 import logging
 import json
-from typing import Optional, Dict, List, Union
+from typing import Any, Optional, Dict, List, Union
+from dotenv import load_dotenv
 from memgpt.client.client import RESTClient, UserMessageResponse
-from ella_memgpt.tools.google_utils import GoogleEmailUtils
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-import os
+import html
+import re
+import asyncio
+import base64
+from .google_service_manager import google_service_manager
 
+# Load environment variables
+load_dotenv()
+
+# Constants
+BASE_URL = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
+
+# Logging configuration
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class MemGPTEmailRouter:
-    def __init__(self, base_url: str, gmail_token_path: str, google_credentials_path: str):
-        self.base_url = base_url
-        self.gmail_token_path = gmail_token_path
-        self.google_credentials_path = google_credentials_path
-        self.email_utils = GoogleEmailUtils(self.gmail_token_path, self.google_credentials_path)
+    """
+    A class for handling email generation and sending using MemGPT and Gmail API.
+    
+    This class is responsible for generating email content using MemGPT and sending
+    emails via Gmail API. It uses the GoogleServiceManager for Gmail service access.
+    """
+
+    def __init__(self):
+        """
+        Initialize the MemGPTEmailRouter using the GoogleServiceManager.
+        """
+        self.base_url = BASE_URL
+        self.service = google_service_manager.get_gmail_service()
+        self.auth_email = google_service_manager.get_auth_email()
 
     async def generate_and_send_email(self, 
                                       to_email: str, 
@@ -52,6 +73,8 @@ class MemGPTEmailRouter:
         else:
             logger.error(f"Failed to send email: {result['message']}")
 
+        return result
+
     async def _generate_content(self, context: Dict[str, str], memgpt_user_api_key: str, agent_key: str, instruction_template: Optional[str] = None) -> Optional[str]:
         client = RESTClient(base_url=self.base_url, token=memgpt_user_api_key)
         formatted_message = self._format_message(context, instruction_template)
@@ -66,17 +89,20 @@ class MemGPTEmailRouter:
 
     def _send_email(self, to_email: str, subject: str, body: str, message_id: Optional[str] = None,
                     html_content: Optional[str] = None, attachments: Optional[List[str]] = None) -> Dict[str, str]:
-        msg = MIMEMultipart()
+        msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['To'] = to_email
-        msg['From'] = self.email_utils.auth_email
+        msg['From'] = self.auth_email
+
+        # Convert plain text to HTML if no HTML content is provided
+        if not html_content:
+            html_content = self._plain_text_to_html(body)
 
         # Add plain text body
         msg.attach(MIMEText(body, 'plain'))
 
-        # Add HTML content if provided
-        if html_content:
-            msg.attach(MIMEText(html_content, 'html'))
+        # Add HTML content
+        msg.attach(MIMEText(html_content, 'html'))
 
         # Add attachments if provided
         if attachments:
@@ -90,7 +116,56 @@ class MemGPTEmailRouter:
             msg['In-Reply-To'] = message_id
             msg['References'] = message_id
 
-        return self.email_utils.send_email_mime(msg)
+        try:
+            message = {'raw': base64.urlsafe_b64encode(msg.as_bytes()).decode()}
+            sent_message = self.service.users().messages().send(userId='me', body=message).execute()
+            return {"status": "success", "message_id": sent_message['id']}
+        except Exception as e:
+            logger.error(f"Error sending email: {str(e)}")
+            return {"status": "failed", "message": str(e)}
+
+    def _plain_text_to_html(self, text: str) -> str:
+        # Escape HTML special characters
+        text = html.escape(text)
+        
+        # Convert Markdown-style formatting to HTML
+        text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)  # Bold
+        text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)  # Italic
+        
+        # Split the text into paragraphs
+        paragraphs = text.split('\n\n')
+        formatted_paragraphs = []
+        
+        for paragraph in paragraphs:
+            if re.match(r'^\d+\.', paragraph):  # Check if paragraph starts with a number
+                # It's a numbered list
+                items = re.split(r'\n(?=\d+\.)', paragraph)
+                list_html = '<ol>\n'
+                for item in items:
+                    item = re.sub(r'^\d+\.\s*', '', item.strip())  # Remove the number
+                    list_html += f'  <li>{item}</li>\n'
+                list_html += '</ol>'
+                formatted_paragraphs.append(list_html)
+            else:
+                # Regular paragraph
+                formatted_paragraphs.append(f'<p>{paragraph.replace(chr(10), "<br>")}</p>')
+        
+        return f'''
+        <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                    p {{ margin-bottom: 16px; }}
+                    ol {{ margin-bottom: 16px; padding-left: 20px; }}
+                    li {{ margin-bottom: 8px; }}
+                </style>
+            </head>
+            <body>
+                {''.join(formatted_paragraphs)}
+            </body>
+        </html>
+        '''
+
 
     def _format_message(self, context: Dict[str, str], instruction_template: Optional[str] = None) -> str:
         if instruction_template:
@@ -135,76 +210,13 @@ class MemGPTEmailRouter:
         return None
 
 
-# class MemGPTEmailRouter:
-#     def __init__(self, base_url: str, gmail_token_path: str, google_credentials_path: str):
-#         self.base_url = base_url
-#         self.gmail_token_path = gmail_token_path
-#         self.google_credentials_path = google_credentials_path
-
-#     async def route_reply_to_memgpt_api(self, body: str, subject: str, message_id: str, from_email: str, memgpt_user_api_key: str, agent_key: str) -> None:
-#         client = RESTClient(base_url=self.base_url, token=memgpt_user_api_key)
-        
-#         sender_name = from_email.split('@')[0].replace('.', ' ').title()
-        
-#         formatted_message = (
-#             f"[EMAIL MESSAGE NOTIFICATION - Generate a personalized reply to the following email] "
-#             f"[message_id: {message_id}] "
-#             f"[subject: {subject}] "
-#             f"[from email: {sender_name}] "
-#             f"[message: {body}] "
-#             f"Please generate a thoughtful reply to this email. Address the sender by name, not their email address, and respond directly to their question or comment. Do not include a subject line or any email sending instructions in your reply."
-#         )
-
-#         try:
-#             response = client.user_message(agent_id=agent_key, message=formatted_message)
-#             logger.info(f"MemGPT API response received: {response}")
-
-#             email_content = self.extract_email_content(response)
-
-#             if email_content:
-#                 reply_subject = f"Re: {subject}"
-
-#                 email_utils = GoogleEmailUtils(self.gmail_token_path, self.google_credentials_path)
-#                 result = email_utils.send_email(
-#                     recipient_email=from_email,
-#                     subject=reply_subject,
-#                     body=email_content,
-#                     message_id=message_id
-#                 )
-
-#                 if result['status'] == 'success':
-#                     logger.info(f"Reply email sent successfully. Message ID: {result['message_id']}")
-#                 else:
-#                     logger.error(f"Failed to send reply email: {result['message']}")
-#             else:
-#                 logger.error("Failed to extract email content from LLM response")
-
-#         except Exception as e:
-#             logger.error(f"Error in processing or sending reply email: {str(e)}", exc_info=True)
-
+    def generate_and_send_email_sync(self, **kwargs) -> Dict[str, Any]:
+        """
+        Synchronous version of generate_and_send_email.
+        """
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self.generate_and_send_email(**kwargs))
     
-#     def extract_email_content(self, response: Union[UserMessageResponse, dict]) -> Optional[str]:
-#         logger.info(f"Attempting to extract email content from response type: {type(response)}")
-        
-#         if isinstance(response, UserMessageResponse):
-#             messages = response.messages
-#         elif isinstance(response, dict):
-#             messages = response.get('messages', [])
-#         else:
-#             logger.error(f"Unexpected response type: {type(response)}")
-#             return None
 
-#         for message in messages:
-#             if isinstance(message, dict) and 'function_call' in message:
-#                 function_call = message['function_call']
-#                 if function_call.get('name') == 'send_message':
-#                     try:
-#                         arguments = json.loads(function_call['arguments'])
-#                         content = arguments.get('message')
-#                         logger.info(f"Extracted email content:\n{content}")
-#                         return content
-#                     except json.JSONDecodeError:
-#                         logger.error("Failed to parse function call arguments as JSON")
-        
-#         logger.error(f"Failed to extract content. Full response: {response}")
-#         return None
+# Initialize the MemGPTEmailRouter
+email_router = MemGPTEmailRouter()

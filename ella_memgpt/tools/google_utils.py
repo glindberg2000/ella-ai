@@ -1,33 +1,37 @@
 #google_utils.py
+
+import json
+import logging
 import os
 import sys
-import logging
-import aiosqlite  # Add this import
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from typing import Any, Optional, Dict, List, Tuple, Union
-import pytz
-from datetime import datetime, timedelta, timezone
-import json
-import base64
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email import encoders
-from email.utils import formatdate
-import quopri
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import pytz
+from googleapiclient.errors import HttpError
+from google.auth.exceptions import RefreshError
+
+from ella_dbo.db_manager import get_db_connection, get_user_data_by_field
+from ella_memgpt.tools.google_service_manager import google_service_manager
+from ella_memgpt.tools.memgpt_email_router import email_router
+
+
+# Setup logging
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Constants
+BASE_URL = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
 
 # Add the project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+# Load environment variables from .env file
 
-logger = logging.getLogger(__name__)
-
-from ella_dbo.db_manager import get_db_connection, get_user_data_by_field
 
 class UserDataManager:
     @staticmethod
@@ -106,52 +110,9 @@ class UserDataManager:
             return None
 
 
-class GoogleAuthBase:
-    def __init__(self, token_path: str, credentials_path: str, scopes: list):
-        self.token_path = token_path
-        self.credentials_path = credentials_path
-        self.scopes = scopes
-        self.creds = None
-        self.auth_email = None
-        self._authenticate()
-
-    def _authenticate(self):
-        try:
-            if os.path.exists(self.token_path):
-                self.creds = Credentials.from_authorized_user_file(self.token_path, self.scopes)
-            if not self.creds or not self.creds.valid:
-                if self.creds and self.creds.expired and self.creds.refresh_token:
-                    self.creds.refresh(Request())
-                else:
-                    flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, self.scopes)
-                    self.creds = flow.run_local_server(port=0)
-                with open(self.token_path, "w") as token:
-                    token.write(self.creds.to_json())
-        except Exception as e:
-            logger.error(f"Error during authentication: {str(e)}", exc_info=True)
-
-    def _get_auth_email(self) -> Optional[str]:
-        # This method should be implemented by derived classes if needed
-        return None
-
-class GoogleCalendarUtils(GoogleAuthBase):
-    def __init__(self, token_path: str, credentials_path: str):
-        super().__init__(token_path, credentials_path, ["https://www.googleapis.com/auth/calendar"])
-        self.service = build("calendar", "v3", credentials=self.creds)
-
-    def set_calendar_permissions(self, calendar_id: str, user_email: str):
-        try:
-            rule = {
-                'scope': {
-                    'type': 'user',
-                    'value': user_email
-                },
-                'role': 'writer'
-            }
-            self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
-            logger.info(f"Set calendar permissions for {user_email} on calendar {calendar_id}")
-        except Exception as e:
-            logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
+class GoogleCalendarUtils:
+    def __init__(self, calendar_service):
+        self.service = calendar_service
 
     def get_or_create_user_calendar(self, user_id: str) -> Optional[str]:
         try:
@@ -176,9 +137,26 @@ class GoogleCalendarUtils(GoogleAuthBase):
             self.set_calendar_permissions(created_calendar['id'], user_email)
             
             return created_calendar['id']
+        except RefreshError as e:
+            logger.error(f"Authentication error: {str(e)}. Please check your credentials and scopes.")
+            return None
         except Exception as e:
             logger.error(f"Error in get_or_create_user_calendar: {str(e)}", exc_info=True)
             return None
+
+    def set_calendar_permissions(self, calendar_id: str, user_email: str):
+        try:
+            rule = {
+                'scope': {
+                    'type': 'user',
+                    'value': user_email
+                },
+                'role': 'writer'
+            }
+            self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
+            logger.info(f"Set calendar permissions for {user_email} on calendar {calendar_id}")
+        except Exception as e:
+            logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
 
     def prepare_event_data(
         self,
@@ -426,7 +404,6 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
          
-
     def fetch_upcoming_events(
         self, 
         user_id: str, 
@@ -488,7 +465,6 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logging.error(f"Error fetching events: {str(e)}", exc_info=True)
             return {"items": []}
             
-
     def update_calendar_event(self, user_id: str, event_id: str, event_data: dict, update_series: bool = False, local_timezone: str = 'America/Los_Angeles') -> dict:
         try:
             calendar_id = self.get_or_create_user_calendar(user_id)
@@ -533,14 +509,12 @@ class GoogleCalendarUtils(GoogleAuthBase):
             logging.error(f"Error in update_calendar_event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error updating event: {str(e)}"}
 
-
     def _localize_time(self, time_str: str, timezone: str) -> datetime:
         """Convert a time string to a timezone-aware datetime object."""
         dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=pytz.UTC)
         return dt.astimezone(pytz.timezone(timezone))
-
 
     def delete_calendar_event(self, user_id: str, event_id: str, delete_series: bool = False) -> dict:
         try:
@@ -622,77 +596,57 @@ class GoogleCalendarUtils(GoogleAuthBase):
             return False
 
 class GoogleEmailUtils:
-    def __init__(self, token_path: str, credentials_path: str):
-        self.creds = Credentials.from_authorized_user_file(token_path, [
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/gmail.send",
-            "https://www.googleapis.com/auth/gmail.readonly"
-        ])
-        self.service = build("gmail", "v1", credentials=self.creds)
-        self.auth_email = self._get_auth_email()
+    """
+    A utility class for handling Gmail operations, designed to work with LLM tools.
 
-    def _get_auth_email(self) -> Optional[str]:
-        try:
-            profile = self.service.users().getProfile(userId='me').execute()
-            return profile['emailAddress']
-        except Exception as e:
-            logger.error(f"Error retrieving authenticated email: {str(e)}", exc_info=True)
-            return None
+    This class provides methods for Gmail operations using the MemGPTEmailRouter,
+    with a focus on using memgpt_user_id as the primary identifier.
+    """
 
-    def send_email(self, recipient_email: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
-        try:
-            message = self._create_message(self.auth_email, recipient_email, subject, body, message_id)
-            sent_message = self.service.users().messages().send(userId="me", body=message).execute()
-            logger.info(f"Message sent to {recipient_email}: {sent_message['id']}")
-            return {"status": "success", "message_id": sent_message['id']}
-        except Exception as e:
-            logger.error(f"Error sending email: {str(e)}", exc_info=True)
-            return {"status": "failed", "message": str(e)}
-        
-    def send_email_mime(self, mime_message: MIMEMultipart) -> Dict[str, str]:
-        try:
-            raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode('utf-8')
-            message = {'raw': raw_message}
-            sent_message = self.service.users().messages().send(userId="me", body=message).execute()
-            logger.info(f"MIME message sent: {sent_message['id']}")
-            return {"status": "success", "message_id": sent_message['id']}
-        except Exception as e:
-            logger.error(f"Error sending MIME email: {str(e)}", exc_info=True)
-            return {"status": "failed", "message": str(e)}
-
-    def _create_message(self, sender: str, to: str, subject: str, message_text: str, message_id: Optional[str] = None) -> Dict[str, str]:
-        message = MIMEMultipart('alternative')
-        message['to'] = to
-        message['from'] = sender
-        message['subject'] = subject
-        
-        # Convert line breaks to HTML <br> tags
-        html_content = message_text.replace('\n', '<br>')
-        
-        # Wrap the content in HTML tags
-        full_html = f"""
-        <html>
-          <head></head>
-          <body>
-            <p>{html_content}</p>
-          </body>
-        </html>
+    @staticmethod
+    def send_email(memgpt_user_id: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
         """
-        
-        # Attach parts
-        part1 = MIMEText(message_text, 'plain')
-        part2 = MIMEText(full_html, 'html')
-        message.attach(part1)
-        message.attach(part2)
+        Send an email using the MemGPTEmailRouter, identified by memgpt_user_id.
 
-        if message_id:
-            message['In-Reply-To'] = message_id
-            message['References'] = message_id
-        
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        return {'raw': raw_message}
+        Args:
+            memgpt_user_id (str): The unique identifier for the user in the MemGPT system.
+            subject (str): The email subject.
+            body (str): The email body.
+            message_id (Optional[str]): The ID of the message being replied to, if applicable.
 
+        Returns:
+            Dict[str, str]: A dictionary containing the status and message ID of the sent email.
+        """
+        try:
+            user_data = UserDataManager.get_user_data(memgpt_user_id)
+            if not user_data:
+                logger.error(f"No user data found for user ID: {memgpt_user_id}")
+                return {"status": "failed", "message": "No valid user data available."}
 
+            recipient_email = user_data.get('email')
+            if not recipient_email:
+                logger.error(f"No email found for user ID: {memgpt_user_id}")
+                return {"status": "failed", "message": "No valid recipient email address available."}
+
+            result = email_router.generate_and_send_email_sync(
+                to_email=recipient_email,
+                subject=subject,
+                context={"body": body},
+                memgpt_user_api_key=user_data.get('memgpt_user_api_key'),
+                agent_key=user_data.get('default_agent_key'),
+                message_id=message_id,
+                is_reply=bool(message_id)
+            )
+            
+            if result['status'] == 'success':
+                logger.info(f"Message sent to user {memgpt_user_id} ({recipient_email}): {result['message_id']}")
+            else:
+                logger.error(f"Error sending email to user {memgpt_user_id}: {result['message']}")
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error sending email for user {memgpt_user_id}: {str(e)}", exc_info=True)
+            return {"status": "failed", "message": str(e)}
 
 
 def is_valid_timezone(timezone_str):

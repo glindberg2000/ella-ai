@@ -262,8 +262,6 @@ def schedule_event(
         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
 
-
-
 def update_event(
     self: 'Agent',
     user_id: str,
@@ -418,104 +416,6 @@ def update_event(
         logger.error(f"Error in update_event: {str(e)}", exc_info=True)
         return json.dumps({"success": False, "message": f"Error updating event: {str(e)}"})
     
-# def fetch_events(
-#     self: Agent,
-#     user_id: str,
-#     max_results: int = 10,
-#     time_min: Optional[str] = None,
-#     time_max: Optional[str] = None,
-#     local_timezone: Optional[str] = None
-# ) -> str:
-#     """
-#     Fetch upcoming events from the user's Google Calendar within the specified time range.
-
-#     Args:
-#         self (Agent): The agent instance calling the tool.
-#         user_id (str): The unique identifier for the user.
-#         max_results (int): The maximum number of events to return. Default is 10.
-#         time_min (Optional[str]): The minimum time to filter events in ISO 8601 format. Default is None.
-#                                   Example: "2024-01-01T00:00:00Z" to fetch events starting from January 1, 2024.
-#         time_max (Optional[str]): The maximum time to filter events in ISO 8601 format. Default is None.
-#                                   Example: "2024-01-14T23:59:59Z" to fetch events up to January 14, 2024.
-#         local_timezone (Optional[str]): The timezone for the events. If None, the user's default timezone will be used.
-
-#     Returns:
-#         str: A JSON string describing the fetched events.
-#     """
-#     import os
-#     import sys
-#     import logging
-#     from dotenv import load_dotenv
-#     import json
-#     from datetime import datetime
-#     import pytz
-#     from typing import Optional
-
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(logging.DEBUG)
-
-#     try:
-#         load_dotenv()
-#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-#             return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
-
-#         if MEMGPT_TOOLS_PATH not in sys.path:
-#             sys.path.append(MEMGPT_TOOLS_PATH)
-
-#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-#         from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
-
-#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-#         if not local_timezone:
-#             local_timezone = UserDataManager.get_user_timezone(user_id)
-#         elif not is_valid_timezone(local_timezone):
-#             return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
-
-#         logger.debug(f"Fetching events for user_id: {user_id}, timezone: {local_timezone}")
-
-#         tz = pytz.timezone(local_timezone)
-#         now = datetime.now(tz)
-
-#         if not time_min:
-#             time_min = now.isoformat()
-#         if not time_max:
-#             time_max = (now + timedelta(days=1)).isoformat()
-
-#         logger.debug(f"Time range: {time_min} to {time_max}")
-
-#         events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, time_max, local_timezone)
-
-#         logger.debug(f"Fetched events data: {events_data}")
-
-#         if not events_data.get('items', []):
-#             return json.dumps({"success": True, "message": "No upcoming events found.", "events": []})
-
-#         event_list = []
-#         for event in events_data['items']:
-#             event_summary = {
-#                 'title': event['summary'],
-#                 'start': event['start'].get('dateTime', event['start'].get('date')),
-#                 'end': event['end'].get('dateTime', event['end'].get('date')),
-#                 'id': event['id']
-#             }
-#             event_list.append(event_summary)
-
-#         result = {
-#             "success": True,
-#             "events": event_list
-#         }
-
-#         return json.dumps(result)
-
-#     except Exception as e:
-#         logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
-#         return json.dumps({"success": False, "message": f"Error fetching events: {str(e)}"})
-
 def fetch_events(
     self: 'Agent',
     user_id: str,
@@ -728,7 +628,7 @@ def delete_event(
         return f"Error in delete_event function: {str(e)}"
 
 def send_email(
-    self: Agent,
+    self: 'Agent',
     user_id: str,
     subject: str,
     body: str,
@@ -736,61 +636,34 @@ def send_email(
 ) -> str:
     """
     Send an email using the Google Gmail API.
-
+    
     Args:
-        self (Agent): The agent instance calling the tool.
-        user_id (str): The unique identifier for the user (recipient).
-        subject (str): The subject of the email.
-        body (str): The body content of the email.
-        message_id (Optional[str]): An optional message ID for threading replies.
-
+    self (Agent): The agent instance calling the tool.
+    user_id (str): The unique identifier for the user (recipient) in the MemGPT system.
+    subject (str): The subject of the email.
+    body (str): The body content of the email.
+    message_id (Optional[str]): An optional message ID for threading replies.
+    
     Returns:
-        str: A message indicating success or failure of the email sending process.
+    str: A message indicating success or failure of the email sending process.
     """
+    # Logging configuration
     import logging
-    import os
-    import sys
-    from dotenv import load_dotenv
-
+    logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
 
+    from google_utils import GoogleEmailUtils
     try:
-        load_dotenv()
-        MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-        CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-        if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-            return "Error: MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"
-
-        logger.debug(f"MEMGPT_TOOLS_PATH: {MEMGPT_TOOLS_PATH}")
-        logger.debug(f"CREDENTIALS_PATH: {CREDENTIALS_PATH}")
-
-        if MEMGPT_TOOLS_PATH not in sys.path:
-            sys.path.append(MEMGPT_TOOLS_PATH)
-
-        GMAIL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gmail_token.json')
-        GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-        from google_utils import UserDataManager, GoogleEmailUtils
-
-        email_utils = GoogleEmailUtils(GMAIL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-        recipient_email = UserDataManager.get_user_email(user_id)
-
-        if not recipient_email:
-            return "Error: No valid recipient email address available."
-
-        result = email_utils.send_email(recipient_email, subject, body, message_id)
-
+        result = GoogleEmailUtils.send_email(user_id, subject, body, message_id)
+        
         if result['status'] == 'success':
             return f"Message was successfully sent. Message ID: {result['message_id']}"
         else:
             return f"Message failed to send with error: {result['message']}"
-
     except Exception as e:
         logger.error(f"Error in send_email: {str(e)}", exc_info=True)
         return f"Error sending email: {str(e)}"
-
-
+    
 def send_sms(
     self: Agent,
     user_id: str,
