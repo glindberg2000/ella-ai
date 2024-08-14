@@ -21,10 +21,10 @@ load_dotenv()
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-from ella_memgpt.tools.google_utils import GoogleCalendarUtils, is_valid_timezone, parse_datetime
-from ella_memgpt.tools.google_service_manager import google_service_manager
-from ella_memgpt.tools.memgpt_email_router import email_router
-from ella_memgpt.tools.voice_call_manager import VoiceCallManager
+from google_utils import GoogleCalendarUtils, is_valid_timezone, parse_datetime
+from google_service_manager import google_service_manager
+from memgpt_email_router import email_router
+from voice_call_manager import VoiceCallManager
 from ella_dbo.db_manager import get_user_data_by_field
 
 # Initialize utilities
@@ -34,28 +34,23 @@ voice_call_manager = VoiceCallManager()
 
 class UserDataManager:
     @staticmethod
-    def get_user_data(memgpt_user_id: str) -> dict:
+    def get_user_data(memgpt_user_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve all data for a given user."""
         try:
             logger.debug(f"Attempting to retrieve user data for ID: {memgpt_user_id}")
             user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
             if user_data:
                 logger.debug(f"User data retrieved successfully: {user_data}")
+                return user_data
             else:
                 logger.warning(f"No user data found for ID: {memgpt_user_id}")
-                # Return default user data for testing purposes
-                user_data = {
-                    "memgpt_user_id": memgpt_user_id,
-                    "email": f"{memgpt_user_id}@example.com",
-                    "local_timezone": "UTC",
-                    "memgpt_user_api_key": "test_api_key",
-                    "default_agent_key": "test_agent_key"
-                }
-                logger.info(f"Using default user data for testing: {user_data}")
-            return user_data
+                # Debug: Print all users in the database
+                all_users = get_user_data_by_field('memgpt_user_id', None)  # Assuming this returns all users if field is None
+                logger.debug(f"All users in database: {all_users}")
+                return None
         except Exception as e:
             logger.error(f"Error retrieving user data: {str(e)}", exc_info=True)
-            return {}
+            return None
 
     @staticmethod
     def get_user_timezone(memgpt_user_id: str) -> str:

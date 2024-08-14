@@ -60,9 +60,8 @@ async def test_send_reminder():
 
     async with aiohttp.ClientSession() as session:
         try:
-            logger.info("Sending POST request")
-            async with session.post(url, headers=headers, json=payload, timeout=70) as response:
-                logger.info(f"Received response with status: {response.status}")
+            async with session.post(url, headers=headers, json=payload, timeout=60) as response:
+                logger.info(f"Response status: {response.status}")
                 response_text = await response.text()
                 logger.info(f"Response body: {response_text}")
 
@@ -77,8 +76,8 @@ async def test_send_reminder():
                 assert result['success'] is True, f"Expected success to be True, got {result.get('success')}"
                 assert result['message'] == "Reminder sent successfully", f"Expected message 'Reminder sent successfully', got '{result.get('message')}'"
         except asyncio.TimeoutError:
-            logger.error("Request timed out after 70 seconds")
-            pytest.fail("Request timed out after 70 seconds")
+            logger.error("Request timed out after 60 seconds")
+            pytest.fail("Request timed out after 60 seconds")
         except Exception as e:
             logger.error(f"An error occurred: {str(e)}")
             pytest.fail(f"Test failed: {str(e)}")

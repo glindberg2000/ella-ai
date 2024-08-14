@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from email.utils import parseaddr
-from ella_memgpt.tools.google_utils import GoogleEmailUtils
-from ella_memgpt.tools.memgpt_email_router import MemGPTEmailRouter
+from google_utils import GoogleEmailUtils
+from memgpt_email_router import MemGPTEmailRouter
 from ella_dbo.db_manager import get_user_data_by_field
 
 # Load environment variables from .env file
