@@ -3,7 +3,8 @@
 import os
 import os.path
 from typing import Optional
-from google.oauth2.credentials import Credentials
+from google.oauth2.credentials import Credentials as UserCredentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -16,6 +17,7 @@ load_dotenv()
 # Constants
 CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH', '')
 GMAIL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gmail_token.json')
+#GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'ella-ai-420020-9cc117656551.json')
 GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify",
                 "https://www.googleapis.com/auth/gmail.send",
@@ -82,7 +84,8 @@ class GoogleServiceManager:
         Refresh the credentials for both Gmail and Calendar services.
         """
         try:
-            cal_creds = Credentials.from_authorized_user_file(GCAL_TOKEN_PATH, GCAL_SCOPES)
+            #cal_creds = ServiceAccountCredentials.from_service_account_file(GCAL_TOKEN_PATH, scopes=GCAL_SCOPES)
+            cal_creds = UserCredentials.from_authorized_user_file(GCAL_TOKEN_PATH, GCAL_SCOPES)
             if cal_creds and cal_creds.expired and cal_creds.refresh_token:
                 cal_creds.refresh(Request())
                 with open(GCAL_TOKEN_PATH, 'w') as token:
@@ -102,7 +105,7 @@ class GoogleServiceManager:
             if not os.path.exists(GMAIL_TOKEN_PATH):
                 logger.error(f"Gmail token file not found at {GMAIL_TOKEN_PATH}")
                 return None
-            creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
+            creds = UserCredentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
             return build("gmail", "v1", credentials=creds)
         except Exception as e:
             logger.error(f"Error creating Gmail service: {str(e)}", exc_info=True)
@@ -113,7 +116,8 @@ class GoogleServiceManager:
             if not os.path.exists(GCAL_TOKEN_PATH):
                 logger.error(f"Calendar token file not found at {GCAL_TOKEN_PATH}")
                 return None
-            creds = Credentials.from_authorized_user_file(GCAL_TOKEN_PATH, GCAL_SCOPES)
+            creds = UserCredentials.from_authorized_user_file(GCAL_TOKEN_PATH, GCAL_SCOPES)
+            # creds = ServiceAccountCredentials.from_service_account_file(GCAL_TOKEN_PATH, scopes=GCAL_SCOPES)
             if "https://www.googleapis.com/auth/calendar" not in creds.scopes:
                 logger.warning("Calendar service initialized with read-only scope. Calendar updates will not be possible.")
             return build("calendar", "v3", credentials=creds)

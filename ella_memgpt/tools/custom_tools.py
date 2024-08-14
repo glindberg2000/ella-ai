@@ -10,144 +10,6 @@ from dotenv import load_dotenv
 from enum import Enum
 import aiosqlite  # Add this import
 
-# Global imports for testing purposes only. Comment out the internal import versions while testing.
-# from google_utils import GoogleCalendarUtils, UserDataManager, GoogleEmailUtils
-# from twilio.rest import Client
-
-# original schedule without conflict checks    
-# def schedule_event(
-#     self: Agent,
-#     user_id: str,
-#     title: str,
-#     start: str,
-#     end: str,
-#     description: Optional[str] = None,
-#     location: Optional[str] = None,
-#     reminders: Optional[str] = None,
-#     recurrence: Optional[str] = None,
-#     local_timezone: Optional[str] = None
-# ) -> str:
-#     """
-#     Schedule a new event in the user's Google Calendar.
-
-#     Args:
-#         self (Agent): The agent instance calling the tool.
-#         user_id (str): The unique identifier for the user.
-#         title (str): The title of the event.
-#         start (str): The start time in ISO 8601 format.
-#         end (str): The end time in ISO 8601 format.
-#         description (Optional[str]): The description of the event.
-#         location (Optional[str]): The location of the event.
-#         reminders (Optional[str]): JSON string representation of reminders. 
-#             Format: '[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-#             Supported reminder methods: 'email', 'popup', 'sms', 'voice'
-#             If not provided, user's default reminder preferences will be used.
-#         recurrence (Optional[str]): Recurrence rule in RRULE format (e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,TU").
-#         local_timezone (Optional[str]): The timezone for the event. If None, the user's default timezone will be used.
-
-#     Returns:
-#         str: A JSON string indicating success or failure of the event creation.
-
-#     Examples:
-#         1. Schedule a one-time event with custom reminders:
-#             schedule_event(
-#                 self,
-#                 user_id='user123',
-#                 title='Doctor Appointment',
-#                 start='2024-08-01T10:00:00',
-#                 end='2024-08-01T11:00:00',
-#                 description='Annual check-up',
-#                 location='123 Clinic Street',
-#                 reminders='[{"method": "email", "minutes": 30}, {"method": "popup", "minutes": 10}]'
-#             )
-
-#         2. Schedule a weekly recurring event with default reminders:
-#             schedule_event(
-#                 self,
-#                 user_id='user123',
-#                 title='Morning Jog',
-#                 start='2024-08-01T07:00:00',
-#                 end='2024-08-01T08:00:00',
-#                 description='Time for a refreshing jog!',
-#                 location='The park',
-#                 recurrence='RRULE:FREQ=WEEKLY;BYDAY=MO,TU',
-#                 local_timezone='America/New_York'
-#             )
-#     """
-#     import logging
-#     import os
-#     import sys
-#     from typing import Optional, List, Dict, Union
-#     from dotenv import load_dotenv
-#     import json
-
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(logging.DEBUG)
-
-#     try:
-#         load_dotenv()
-#         MEMGPT_TOOLS_PATH = os.getenv('MEMGPT_TOOLS_PATH')
-#         CREDENTIALS_PATH = os.getenv('CREDENTIALS_PATH')
-#         if not MEMGPT_TOOLS_PATH or not CREDENTIALS_PATH:
-#             return json.dumps({"success": False, "message": "MEMGPT_TOOLS_PATH or CREDENTIALS_PATH not set in environment variables"})
-
-#         if MEMGPT_TOOLS_PATH not in sys.path:
-#             sys.path.append(MEMGPT_TOOLS_PATH)
-
-#         GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
-#         GOOGLE_CREDENTIALS_PATH = os.path.join(CREDENTIALS_PATH, 'google_api_credentials.json')
-
-#         from google_utils import GoogleCalendarUtils, UserDataManager, is_valid_timezone, parse_datetime
-
-#         calendar_utils = GoogleCalendarUtils(GCAL_TOKEN_PATH, GOOGLE_CREDENTIALS_PATH)
-
-#         if not local_timezone:
-#             local_timezone = UserDataManager.get_user_timezone(user_id)
-#         elif not is_valid_timezone(local_timezone):
-#             return json.dumps({"success": False, "message": f"Invalid timezone: {local_timezone}"})
-        
-#         start_time = parse_datetime(start, local_timezone)
-#         end_time = parse_datetime(end, local_timezone)
-
-#         event_data = {
-#             'summary': title,
-#             'start': {'dateTime': start_time.isoformat(), 'timeZone': local_timezone},
-#             'end': {'dateTime': end_time.isoformat(), 'timeZone': local_timezone},
-#             'description': description,
-#             'location': location,
-#         }
-
-#         if recurrence:
-#             event_data['recurrence'] = [recurrence]
-
-#         # Handle reminders
-#         if reminders is None:
-#             # Fetch user's default reminder preferences
-#             user_prefs = UserDataManager.get_user_reminder_prefs(user_id)
-#             default_reminder_time = user_prefs['default_reminder_time']
-#             default_methods = user_prefs['reminder_method'].split(',')
-            
-#             reminders_list = [{'method': method, 'minutes': default_reminder_time} for method in default_methods]
-#         else:
-#             reminders_list = json.loads(reminders)
-
-#         event_data['reminders'] = {
-#             'useDefault': False,
-#             'overrides': reminders_list
-#         }
-
-#         result = calendar_utils.create_calendar_event(user_id, event_data, local_timezone)
-
-#         if result.get("success", False):
-#             return json.dumps({"success": True, "message": f"Event created: ID: {result.get('id', 'Unknown')}, Link: {result.get('htmlLink', 'No link available')}"})
-#         else:
-#             return json.dumps({"success": False, "message": result.get('message', 'Failed to create event')})
-
-#     except Exception as e:
-#         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
-#         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
-
-#updated schedule event with conflict checks:
 
 
 def schedule_event(
@@ -843,6 +705,91 @@ def send_voice(
 # List of all custom tools
 CUSTOM_TOOLS = [schedule_event, update_event, fetch_events, delete_event, send_email, send_sms, send_voice]
 
+
+
+# Global imports for testing purposes only. Comment out the internal import versions while testing.
+# from google_utils import GoogleCalendarUtils, UserDataManager, GoogleEmailUtils
+# from twilio.rest import Client
+
+#proposed API based function:
+# custom_tools.py
+
+# from memgpt.agent import Agent
+# from typing import Optional
+# import logging
+# import requests
+# import json
+
+# # Set up logging
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+
+# # API configuration
+# API_BASE_URL = "http://localhost:8000"  # Update this to your actual API URL
+# API_KEY = "your-secret-api-key"  # Update this to your actual API key
+
+# def schedule_event(
+#     self: Agent,
+#     user_id: str,
+#     title: str,
+#     start: str,
+#     end: str,
+#     description: Optional[str] = None,
+#     location: Optional[str] = None,
+#     reminders: Optional[str] = None,
+#     recurrence: Optional[str] = None
+# ) -> str:
+#     """
+#     Schedule a new event using the EventManagementService API.
+
+#     Args:
+#         self (Agent): The agent instance calling the tool.
+#         user_id (str): The unique identifier for the user.
+#         title (str): The title of the event.
+#         start (str): The start time in ISO 8601 format.
+#         end (str): The end time in ISO 8601 format.
+#         description (Optional[str]): The description of the event.
+#         location (Optional[str]): The location of the event.
+#         reminders (Optional[str]): JSON string representation of reminders.
+#         recurrence (Optional[str]): Recurrence rule in RRULE format.
+
+#     Returns:
+#         str: A JSON string indicating success or failure of the event creation.
+#     """
+#     try:
+#         url = f"{API_BASE_URL}/schedule_event"
+#         headers = {
+#             "Content-Type": "application/json",
+#             "X-API-Key": API_KEY
+#         }
+#         payload = {
+#             "user_id": user_id,
+#             "event": {
+#                 "summary": title,
+#                 "start_time": start,
+#                 "end_time": end,
+#                 "description": description,
+#                 "location": location,
+#                 "reminders": reminders,
+#                 "recurrence": recurrence
+#             }
+#         }
+        
+#         response = requests.post(url, headers=headers, json=payload)
+#         response.raise_for_status()
+        
+#         result = response.json()
+        
+#         if "id" in result:
+#             return json.dumps({"success": True, "message": f"Event created: ID: {result['id']}"})
+#         else:
+#             return json.dumps({"success": False, "message": "Failed to create event"})
+    
+#     except requests.exceptions.RequestException as e:
+#         logger.error(f"Error in schedule_event: {str(e)}", exc_info=True)
+#         return json.dumps({"success": False, "message": f"Error scheduling event: {str(e)}"})
+
+# ... (other tools to be updated similarly)
 
 
 

@@ -47,6 +47,10 @@ reminder_app = FastAPI()
 
 calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
 
+
+
+
+
 def convert_to_utc_time(local_time_str, timezone='America/Los_Angeles'):
     return parse_datetime(local_time_str, timezone).astimezone(pytz.UTC)
 

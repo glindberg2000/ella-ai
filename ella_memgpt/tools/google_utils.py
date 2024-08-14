@@ -158,6 +158,95 @@ class GoogleCalendarUtils:
         except Exception as e:
             logger.error(f"Error setting calendar permissions: {str(e)}", exc_info=True)
 
+    # def prepare_event_data(
+    #     self,
+    #     user_id: str,
+    #     title: str,
+    #     start: str,
+    #     end: str,
+    #     description: Optional[str] = None,
+    #     location: Optional[str] = None,
+    #     reminders: Optional[str] = None,
+    #     recurrence: Optional[str] = None,
+    #     local_timezone: str = 'America/Los_Angeles'
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Prepare event data with proper handling of reminders and time zones.
+
+    #     Args:
+    #         user_id (str): The unique identifier for the user.
+    #         title (str): The title of the event.
+    #         start (str): The start time in ISO 8601 format.
+    #         end (str): The end time in ISO 8601 format.
+    #         description (Optional[str]): The description of the event.
+    #         location (Optional[str]): The location of the event.
+    #         reminders (Optional[str]): JSON string representation of reminders.
+    #         recurrence (Optional[str]): Recurrence rule in RRULE format.
+    #         local_timezone (str): The timezone for the event.
+
+    #     Returns:
+    #         Dict[str, Any]: Prepared event data ready to be used for creating or updating an event.
+    #     """
+    #     start_time = parse_datetime(start, local_timezone)
+    #     end_time = parse_datetime(end, local_timezone)
+    #     current_time = datetime.now(pytz.timezone(local_timezone))
+
+    #     event_data = {
+    #         'summary': title,
+    #         'start': {'dateTime': start_time.isoformat(), 'timeZone': local_timezone},
+    #         'end': {'dateTime': end_time.isoformat(), 'timeZone': local_timezone},
+    #         'description': description,
+    #         'location': location,
+    #     }
+
+    #     if recurrence:
+    #         event_data['recurrence'] = [recurrence]
+
+    #     # Handle reminders
+    #     if reminders:
+    #         reminders_list = json.loads(reminders)
+    #         standard_reminders = []
+    #         custom_reminders = []
+    #         for reminder in reminders_list:
+    #             if reminder['type'] in ['email', 'popup', 'sms']:
+    #                 standard_reminders.append({'method': reminder['type'], 'minutes': reminder['minutes']})
+    #             else:
+    #                 custom_reminders.append(reminder)
+            
+    #         event_data['reminders'] = {
+    #             'useDefault': False,
+    #             'overrides': standard_reminders
+    #         }
+            
+    #         if custom_reminders:
+    #             event_data['extendedProperties'] = {
+    #                 'private': {
+    #                     'customReminders': json.dumps(custom_reminders)
+    #                 }
+    #             }
+    #     else:
+    #         # Use default reminders if none specified
+    #         event_data['reminders'] = {'useDefault': True}
+
+    #     # Ensure at least one valid reminder
+    #     time_until_event = start_time - current_time
+    #     if time_until_event > timedelta(0):
+    #         if not event_data['reminders'].get('overrides') and event_data['reminders'].get('useDefault', True):
+    #             user_prefs = UserDataManager.get_user_reminder_prefs(user_id)
+    #             default_reminder_time = user_prefs['default_reminder_time']
+    #             default_method = user_prefs['reminder_method'].split(',')[0]
+                
+    #             if time_until_event < timedelta(minutes=default_reminder_time):
+    #                 # If the event is too soon for the default reminder, set an immediate reminder
+    #                 immediate_reminder_minutes = max(0, time_until_event.total_seconds() // 60)
+    #                 event_data['reminders'] = {
+    #                     'useDefault': False,
+    #                     'overrides': [{'method': default_method, 'minutes': int(immediate_reminder_minutes)}]
+    #                 }
+
+    #     return event_data
+    
+
     def prepare_event_data(
         self,
         user_id: str,
@@ -170,23 +259,6 @@ class GoogleCalendarUtils:
         recurrence: Optional[str] = None,
         local_timezone: str = 'America/Los_Angeles'
     ) -> Dict[str, Any]:
-        """
-        Prepare event data with proper handling of reminders and time zones.
-
-        Args:
-            user_id (str): The unique identifier for the user.
-            title (str): The title of the event.
-            start (str): The start time in ISO 8601 format.
-            end (str): The end time in ISO 8601 format.
-            description (Optional[str]): The description of the event.
-            location (Optional[str]): The location of the event.
-            reminders (Optional[str]): JSON string representation of reminders.
-            recurrence (Optional[str]): Recurrence rule in RRULE format.
-            local_timezone (str): The timezone for the event.
-
-        Returns:
-            Dict[str, Any]: Prepared event data ready to be used for creating or updating an event.
-        """
         start_time = parse_datetime(start, local_timezone)
         end_time = parse_datetime(end, local_timezone)
         current_time = datetime.now(pytz.timezone(local_timezone))
@@ -204,28 +276,34 @@ class GoogleCalendarUtils:
 
         # Handle reminders
         if reminders:
-            reminders_list = json.loads(reminders)
-            standard_reminders = []
-            custom_reminders = []
-            for reminder in reminders_list:
-                if reminder['type'] in ['email', 'popup', 'sms']:
-                    standard_reminders.append({'method': reminder['type'], 'minutes': reminder['minutes']})
-                else:
-                    custom_reminders.append(reminder)
-            
-            event_data['reminders'] = {
-                'useDefault': False,
-                'overrides': standard_reminders
-            }
-            
-            if custom_reminders:
-                event_data['extendedProperties'] = {
-                    'private': {
-                        'customReminders': json.dumps(custom_reminders)
-                    }
+            try:
+                reminders_list = json.loads(reminders)
+                standard_reminders = []
+                custom_reminders = []
+                for reminder in reminders_list:
+                    if 'method' in reminder and 'minutes' in reminder:
+                        if reminder['method'] in ['email', 'popup', 'sms']:
+                            standard_reminders.append({'method': reminder['method'], 'minutes': reminder['minutes']})
+                        else:
+                            custom_reminders.append(reminder)
+                    else:
+                        logger.warning(f"Invalid reminder format: {reminder}")
+                
+                event_data['reminders'] = {
+                    'useDefault': False,
+                    'overrides': standard_reminders
                 }
+                
+                if custom_reminders:
+                    event_data['extendedProperties'] = {
+                        'private': {
+                            'customReminders': json.dumps(custom_reminders)
+                        }
+                    }
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON in reminders: {reminders}")
+                event_data['reminders'] = {'useDefault': True}
         else:
-            # Use default reminders if none specified
             event_data['reminders'] = {'useDefault': True}
 
         # Ensure at least one valid reminder
@@ -246,6 +324,64 @@ class GoogleCalendarUtils:
 
         return event_data
     
+
+
+    def find_available_slots(
+        self,
+        user_id: str,
+        start_time: datetime,
+        end_time: datetime,
+        conflicting_events: List[Dict[str, Any]],
+        local_timezone: str
+    ) -> List[Dict[str, str]]:
+        tz = pytz.timezone(local_timezone)
+        event_duration = end_time - start_time
+        buffer = timedelta(minutes=15)  # Add a 15-minute buffer between events
+
+        # Set business hours
+        business_start = tz.localize(datetime.combine(start_time.date(), datetime.min.time())).replace(hour=9, minute=0)
+        business_end = tz.localize(datetime.combine(start_time.date(), datetime.min.time())).replace(hour=17, minute=0)
+
+        # Extend search to next 7 days
+        search_end = business_end + timedelta(days=7)
+
+        available_slots = []
+        current_time = max(start_time, business_start)
+
+        sorted_events = sorted(conflicting_events, key=lambda e: parse_datetime(e['start'], local_timezone))
+        
+        while current_time < search_end:
+            if current_time.time() < business_start.time():
+                current_time = tz.localize(datetime.combine(current_time.date(), business_start.time()))
+            elif current_time.time() >= business_end.time():
+                current_time = tz.localize(datetime.combine(current_time.date() + timedelta(days=1), business_start.time()))
+                continue
+
+            slot_end = min(current_time + event_duration, tz.localize(datetime.combine(current_time.date(), business_end.time())))
+
+            is_free = True
+            for event in sorted_events:
+                event_start = parse_datetime(event['start'], local_timezone)
+                event_end = parse_datetime(event['end'], local_timezone)
+
+                if (event_start < slot_end) and (event_end > current_time):
+                    is_free = False
+                    current_time = max(current_time, event_end + buffer)
+                    break
+
+            if is_free:
+                available_slots.append({
+                    "start": current_time.isoformat(),
+                    "end": slot_end.isoformat(),
+                    "day_of_week": current_time.strftime("%A")
+                })
+                current_time = slot_end + buffer
+
+            if len(available_slots) >= 10:  # Limit to 10 available slots
+                break
+
+        return available_slots
+ 
     def check_conflicts(
         self,
         user_id: str,
@@ -254,19 +390,6 @@ class GoogleCalendarUtils:
         event_id: Optional[str] = None,
         local_timezone: str = 'America/Los_Angeles'
     ) -> Dict[str, Any]:
-        """
-        Check for conflicting events in the user's calendar.
-
-        Args:
-            user_id (str): The unique identifier for the user.
-            start (str): The start time of the event in ISO 8601 format.
-            end (str): The end time of the event in ISO 8601 format.
-            event_id (Optional[str]): The ID of the event being updated (if applicable).
-            local_timezone (str): The timezone for the event.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing information about conflicts and suggested alternative times.
-        """
         calendar_id = self.get_or_create_user_calendar(user_id)
         if not calendar_id:
             return {"success": False, "message": "Unable to get or create user calendar"}
@@ -274,12 +397,14 @@ class GoogleCalendarUtils:
         start_time = parse_datetime(start, local_timezone)
         end_time = parse_datetime(end, local_timezone)
 
-        # Fetch existing events
+        # Extend the search range to 7 days
+        search_end = end_time + timedelta(days=7)
+
         events = self.fetch_upcoming_events(
             user_id=user_id,
-            max_results=50,
+            max_results=100,  # Increase max results to cover more days
             time_min=start_time.isoformat(),
-            time_max=end_time.isoformat(),
+            time_max=search_end.isoformat(),
             local_timezone=local_timezone
         )
 
@@ -298,16 +423,16 @@ class GoogleCalendarUtils:
                 })
 
         if conflicting_events:
-            # Generate alternative times
-            alternative_times = self.suggest_alternative_times(start_time, end_time, conflicting_events, local_timezone)
+            available_slots = self.find_available_slots(user_id, start_time, end_time, conflicting_events, local_timezone)
             return {
                 "success": False,
                 "message": "Conflicting events found.",
                 "conflicts": conflicting_events,
-                "suggested_times": alternative_times
+                "available_slots": available_slots
             }
         else:
             return {"success": True, "message": "No conflicts found."}
+
 
     def suggest_alternative_times(
         self,
@@ -315,19 +440,7 @@ class GoogleCalendarUtils:
         end_time: datetime,
         conflicting_events: List[Dict[str, Any]],
         local_timezone: str
-    ) -> List[Tuple[str, str]]:
-        """
-        Suggest alternative times for an event based on conflicts.
-
-        Args:
-            start_time (datetime): The original start time of the event.
-            end_time (datetime): The original end time of the event.
-            conflicting_events (List[Dict[str, Any]]): List of conflicting events.
-            local_timezone (str): The timezone for the event.
-
-        Returns:
-            List[Tuple[str, str]]: A list of tuples containing suggested start and end times.
-        """
+    ) -> List[Dict[str, str]]:
         event_duration = end_time - start_time
         buffer = timedelta(minutes=15)  # Add a 15-minute buffer between events
         alternative_times = []
@@ -339,7 +452,10 @@ class GoogleCalendarUtils:
             suggested_end = first_conflict_start - buffer
             suggested_start = suggested_end - event_duration
             if suggested_start > start_time - timedelta(days=1):  # Don't suggest times more than a day earlier
-                alternative_times.append((suggested_start.isoformat(), suggested_end.isoformat()))
+                alternative_times.append({
+                    "start": suggested_start.isoformat(),
+                    "end": suggested_end.isoformat()
+                })
 
         # Suggest times between conflicts
         sorted_conflicts = sorted(conflicting_events, key=lambda e: parse_datetime(e['start'], local_timezone))
@@ -349,7 +465,10 @@ class GoogleCalendarUtils:
             if current_end + buffer + event_duration + buffer <= next_start:
                 suggested_start = current_end + buffer
                 suggested_end = suggested_start + event_duration
-                alternative_times.append((suggested_start.isoformat(), suggested_end.isoformat()))
+                alternative_times.append({
+                    "start": suggested_start.isoformat(),
+                    "end": suggested_end.isoformat()
+                })
 
         # Suggest a time after the last conflict
         last_conflict = max(conflicting_events, key=lambda e: parse_datetime(e['end'], local_timezone))
@@ -357,9 +476,13 @@ class GoogleCalendarUtils:
         suggested_start = last_conflict_end + buffer
         suggested_end = suggested_start + event_duration
         if suggested_end < end_time + timedelta(days=1):  # Don't suggest times more than a day later
-            alternative_times.append((suggested_start.isoformat(), suggested_end.isoformat()))
+            alternative_times.append({
+                "start": suggested_start.isoformat(),
+                "end": suggested_end.isoformat()
+            })
 
         return alternative_times
+
 
     def create_calendar_event(self, user_id: str, event_data: dict, local_timezone: str) -> dict:
         try:
@@ -374,36 +497,16 @@ class GoogleCalendarUtils:
             event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
             event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
 
-            # Handle reminders
-            if 'reminders' not in event_data:
-                event_data['reminders'] = {'useDefault': True}
-
-            # Handle custom reminders in extendedProperties
-            if 'extendedProperties' in event_data and 'private' in event_data['extendedProperties']:
-                custom_reminders = event_data['extendedProperties']['private'].get('customReminders')
-                if custom_reminders:
-                    # Ensure the customReminders are properly formatted as a JSON string
-                    if isinstance(custom_reminders, str):
-                        try:
-                            json.loads(custom_reminders)
-                        except json.JSONDecodeError:
-                            logger.warning(f"Invalid JSON in customReminders: {custom_reminders}")
-                            del event_data['extendedProperties']['private']['customReminders']
-                    elif isinstance(custom_reminders, list):
-                        event_data['extendedProperties']['private']['customReminders'] = json.dumps(custom_reminders)
-                    else:
-                        logger.warning(f"Unexpected type for customReminders: {type(custom_reminders)}")
-                        del event_data['extendedProperties']['private']['customReminders']
-
             # Log the event data being sent
             logging.info(f"Sending event data: {json.dumps(event_data, indent=2)}")
 
             event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
-            return {"success": True, "id": event['id'], "htmlLink": event.get('htmlLink')}
-        except HttpError as e:
+            return {"success": True, "event": event}
+        except Exception as e:
             logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": f"Error creating event: {str(e)}"}
-         
+
+       
     def fetch_upcoming_events(
         self, 
         user_id: str, 
@@ -661,3 +764,210 @@ def parse_datetime(dt_str, timezone):
     if dt.tzinfo is None:
         return pytz.timezone(timezone).localize(dt)
     return dt.astimezone(pytz.timezone(timezone))
+
+
+
+        # def check_conflicts(
+    #     self,
+    #     user_id: str,
+    #     start: str,
+    #     end: str,
+    #     event_id: Optional[str] = None,
+    #     local_timezone: str = 'America/Los_Angeles'
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Check for conflicting events in the user's calendar.
+
+    #     Args:
+    #         user_id (str): The unique identifier for the user.
+    #         start (str): The start time of the event in ISO 8601 format.
+    #         end (str): The end time of the event in ISO 8601 format.
+    #         event_id (Optional[str]): The ID of the event being updated (if applicable).
+    #         local_timezone (str): The timezone for the event.
+
+    #     Returns:
+    #         Dict[str, Any]: A dictionary containing information about conflicts and suggested alternative times.
+    #     """
+    #     calendar_id = self.get_or_create_user_calendar(user_id)
+    #     if not calendar_id:
+    #         return {"success": False, "message": "Unable to get or create user calendar"}
+
+    #     start_time = parse_datetime(start, local_timezone)
+    #     end_time = parse_datetime(end, local_timezone)
+
+    #     # Fetch existing events
+    #     events = self.fetch_upcoming_events(
+    #         user_id=user_id,
+    #         max_results=50,
+    #         time_min=start_time.isoformat(),
+    #         time_max=end_time.isoformat(),
+    #         local_timezone=local_timezone
+    #     )
+
+    #     conflicting_events = []
+    #     for event in events.get('items', []):
+    #         if event.get('id') == event_id:
+    #             continue  # Skip the event being updated (if applicable)
+    #         event_start = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), local_timezone)
+    #         event_end = parse_datetime(event['end'].get('dateTime', event['end'].get('date')), local_timezone)
+    #         if (event_start < end_time and event_end > start_time):
+    #             conflicting_events.append({
+    #                 "id": event['id'],
+    #                 "summary": event['summary'],
+    #                 "start": event['start'].get('dateTime', event['start'].get('date')),
+    #                 "end": event['end'].get('dateTime', event['end'].get('date'))
+    #             })
+
+    #     if conflicting_events:
+    #         # Generate alternative times
+    #         alternative_times = self.suggest_alternative_times(start_time, end_time, conflicting_events, local_timezone)
+    #         return {
+    #             "success": False,
+    #             "message": "Conflicting events found.",
+    #             "conflicts": conflicting_events,
+    #             "suggested_times": alternative_times
+    #         }
+    #     else:
+    #         return {"success": True, "message": "No conflicts found."}
+
+    # def suggest_alternative_times(
+    #     self,
+    #     start_time: datetime,
+    #     end_time: datetime,
+    #     conflicting_events: List[Dict[str, Any]],
+    #     local_timezone: str
+    # ) -> List[Tuple[str, str]]:
+    #     """
+    #     Suggest alternative times for an event based on conflicts.
+
+    #     Args:
+    #         start_time (datetime): The original start time of the event.
+    #         end_time (datetime): The original end time of the event.
+    #         conflicting_events (List[Dict[str, Any]]): List of conflicting events.
+    #         local_timezone (str): The timezone for the event.
+
+    #     Returns:
+    #         List[Tuple[str, str]]: A list of tuples containing suggested start and end times.
+    #     """
+    #     event_duration = end_time - start_time
+    #     buffer = timedelta(minutes=15)  # Add a 15-minute buffer between events
+    #     alternative_times = []
+
+    #     # Suggest a time before the first conflict
+    #     first_conflict = min(conflicting_events, key=lambda e: parse_datetime(e['start'], local_timezone))
+    #     first_conflict_start = parse_datetime(first_conflict['start'], local_timezone)
+    #     if start_time < first_conflict_start:
+    #         suggested_end = first_conflict_start - buffer
+    #         suggested_start = suggested_end - event_duration
+    #         if suggested_start > start_time - timedelta(days=1):  # Don't suggest times more than a day earlier
+    #             alternative_times.append((suggested_start.isoformat(), suggested_end.isoformat()))
+
+    #     # Suggest times between conflicts
+    #     sorted_conflicts = sorted(conflicting_events, key=lambda e: parse_datetime(e['start'], local_timezone))
+    #     for i in range(len(sorted_conflicts) - 1):
+    #         current_end = parse_datetime(sorted_conflicts[i]['end'], local_timezone)
+    #         next_start = parse_datetime(sorted_conflicts[i+1]['start'], local_timezone)
+    #         if current_end + buffer + event_duration + buffer <= next_start:
+    #             suggested_start = current_end + buffer
+    #             suggested_end = suggested_start + event_duration
+    #             alternative_times.append((suggested_start.isoformat(), suggested_end.isoformat()))
+
+    #     # Suggest a time after the last conflict
+    #     last_conflict = max(conflicting_events, key=lambda e: parse_datetime(e['end'], local_timezone))
+    #     last_conflict_end = parse_datetime(last_conflict['end'], local_timezone)
+    #     suggested_start = last_conflict_end + buffer
+    #     suggested_end = suggested_start + event_duration
+    #     if suggested_end < end_time + timedelta(days=1):  # Don't suggest times more than a day later
+    #         alternative_times.append((suggested_start.isoformat(), suggested_end.isoformat()))
+
+    #     return alternative_times
+
+    # def create_calendar_event(self, user_id: str, event_data: dict, local_timezone: str) -> dict:
+    #     try:
+    #         calendar_id = self.get_or_create_user_calendar(user_id)
+    #         if not calendar_id:
+    #             return {"success": False, "message": "Unable to get or create user calendar"}
+
+    #         # Convert event times to user's timezone
+    #         start_time = self._localize_time(event_data['start']['dateTime'], local_timezone)
+    #         end_time = self._localize_time(event_data['end']['dateTime'], local_timezone)
+
+    #         event_data['start'] = {'dateTime': start_time.isoformat(), 'timeZone': local_timezone}
+    #         event_data['end'] = {'dateTime': end_time.isoformat(), 'timeZone': local_timezone}
+
+    #         # Handle reminders
+    #         if 'reminders' not in event_data:
+    #             event_data['reminders'] = {'useDefault': True}
+
+    #         # Handle custom reminders in extendedProperties
+    #         if 'extendedProperties' in event_data and 'private' in event_data['extendedProperties']:
+    #             custom_reminders = event_data['extendedProperties']['private'].get('customReminders')
+    #             if custom_reminders:
+    #                 # Ensure the customReminders are properly formatted as a JSON string
+    #                 if isinstance(custom_reminders, str):
+    #                     try:
+    #                         json.loads(custom_reminders)
+    #                     except json.JSONDecodeError:
+    #                         logger.warning(f"Invalid JSON in customReminders: {custom_reminders}")
+    #                         del event_data['extendedProperties']['private']['customReminders']
+    #                 elif isinstance(custom_reminders, list):
+    #                     event_data['extendedProperties']['private']['customReminders'] = json.dumps(custom_reminders)
+    #                 else:
+    #                     logger.warning(f"Unexpected type for customReminders: {type(custom_reminders)}")
+    #                     del event_data['extendedProperties']['private']['customReminders']
+
+    #         # Log the event data being sent
+    #         logging.info(f"Sending event data: {json.dumps(event_data, indent=2)}")
+
+    #         event = self.service.events().insert(calendarId=calendar_id, body=event_data).execute()
+    #         return {"success": True, "id": event['id'], "htmlLink": event.get('htmlLink')}
+    #     except HttpError as e:
+    #         logging.error(f"Error creating calendar event: {str(e)}", exc_info=True)
+    #         return {"success": False, "message": f"Error creating event: {str(e)}"}
+
+    # def check_conflicts(
+    #     self,
+    #     user_id: str,
+    #     start: str,
+    #     end: str,
+    #     event_id: Optional[str] = None,
+    #     local_timezone: str = 'America/Los_Angeles'
+    # ) -> Dict[str, Any]:
+    #     calendar_id = self.get_or_create_user_calendar(user_id)
+    #     if not calendar_id:
+    #         return {"success": False, "message": "Unable to get or create user calendar"}
+
+    #     start_time = parse_datetime(start, local_timezone)
+    #     end_time = parse_datetime(end, local_timezone)
+
+    #     events = self.fetch_upcoming_events(
+    #         user_id=user_id,
+    #         max_results=50,
+    #         time_min=start_time.isoformat(),
+    #         time_max=end_time.isoformat(),
+    #         local_timezone=local_timezone
+    #     )
+
+    #     conflicting_events = []
+    #     for event in events.get('items', []):
+    #         if event.get('id') == event_id:
+    #             continue  # Skip the event being updated (if applicable)
+    #         event_start = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), local_timezone)
+    #         event_end = parse_datetime(event['end'].get('dateTime', event['end'].get('date')), local_timezone)
+    #         if (event_start < end_time and event_end > start_time):
+    #             conflicting_events.append({
+    #                 "id": event['id'],
+    #                 "summary": event['summary'],
+    #                 "start": event['start'].get('dateTime', event['start'].get('date')),
+    #                 "end": event['end'].get('dateTime', event['end'].get('date'))
+    #             })
+
+    #     if conflicting_events:
+    #         return {
+    #             "success": False,
+    #             "message": "Conflicting events found.",
+    #             "conflicts": conflicting_events,
+    #             "suggested_times": self.suggest_alternative_times(start_time, end_time, conflicting_events, local_timezone)
+    #         }
+    #     else:
+    #         return {"success": True, "message": "No conflicts found."}
