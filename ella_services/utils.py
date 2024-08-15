@@ -2,7 +2,7 @@
 
 import os
 import sys
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta
 import pytz
 import json
@@ -70,12 +70,12 @@ class EventManagementUtils:
                 user_timezone = 'UTC'
 
             # Get or create user's calendar
-            calendar_id = calendar_utils.get_or_create_user_calendar(user_id)
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
             if not calendar_id:
                 logger.error(f"Failed to get or create calendar for user {user_id}")
                 return {"success": False, "message": "Failed to get or create user calendar"}
 
-            prepared_event = calendar_utils.prepare_event_data(
+            prepared_event = EventManagementUtils.prepare_event_data(
                 user_id,
                 event_data['summary'],
                 event_data['start'],
@@ -88,14 +88,15 @@ class EventManagementUtils:
             )
 
             # Check for conflicts
-            conflict_check = calendar_utils.check_conflicts(user_id, event_data['start'], event_data['end'], local_timezone=user_timezone)
+            conflict_check = EventManagementUtils.check_conflicts(user_id, event_data['start'], event_data['end'], local_timezone=user_timezone)
             if not conflict_check["success"]:
                 logger.warning(f"Conflict detected for event: {event_data['summary']}")
                 return conflict_check  # Return conflict information
 
-            result = calendar_utils.create_calendar_event(user_id, prepared_event, user_timezone)
+            result = EventManagementUtils.create_calendar_event(user_id, prepared_event, user_timezone)
             if result["success"]:
                 logger.info(f"Event created successfully: {result['event']['id']}")
+                result['event']['local_timezone'] = user_timezone  # Add local_timezone to the event data
                 return {"success": True, "event": result['event']}
             else:
                 logger.error(f"Failed to create event: {result['message']}")
@@ -103,8 +104,7 @@ class EventManagementUtils:
         except Exception as e:
             logger.error(f"Error scheduling event: {str(e)}", exc_info=True)
             return {"success": False, "message": str(e)}
-
-# Add this method to the EventManagementUtils class
+        
     @staticmethod
     def get_or_create_user_calendar(user_id: str) -> Optional[str]:
         try:
@@ -143,185 +143,157 @@ class EventManagementUtils:
             return None
 
     @staticmethod
-    async def update_event(
+    def prepare_event_data(
         user_id: str,
-        event_id: str,
-        title: Optional[str] = None,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
+        summary: str,
+        start: Dict[str, Any],
+        end: Dict[str, Any],
         description: Optional[str] = None,
         location: Optional[str] = None,
-        reminders: Optional[str] = None,
+        reminders: Optional[Union[str, Dict[str, Any]]] = None,
         recurrence: Optional[str] = None,
-        update_series: bool = False,
-        local_timezone: Optional[str] = None
+        local_timezone: str = 'UTC'
     ) -> Dict[str, Any]:
-        try:
-            calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
-            
-            if not local_timezone:
-                local_timezone = UserDataManager.get_user_timezone(user_id)
+        event = {
+            'summary': summary,
+            'location': location,
+            'description': description,
+            'start': start,
+            'end': end,
+        }
 
-            # Fetch the existing event
-            existing_event = calendar_utils.get_calendar_event(user_id, event_id)
-            if not existing_event:
-                return {"success": False, "message": f"Event with ID {event_id} not found"}
+        # Ensure start and end have the same format (dateTime)
+        for time_field in ['start', 'end']:
+            if 'dateTime' not in event[time_field]:
+                event[time_field]['dateTime'] = event[time_field].get('date')
+            if 'timeZone' not in event[time_field]:
+                event[time_field]['timeZone'] = local_timezone
 
-            # Check for conflicts if start or end time is being updated
-            if start is not None or end is not None:
-                new_start = start or existing_event['start'].get('dateTime', existing_event['start'].get('date'))
-                new_end = end or existing_event['end'].get('dateTime', existing_event['end'].get('date'))
-                conflict_check = calendar_utils.check_conflicts(user_id, new_start, new_end, event_id, local_timezone)
-                if not conflict_check["success"]:
-                    return conflict_check  # Return conflict information
+        if recurrence:
+            event['recurrence'] = [recurrence]
 
-            # Prepare the update data
-            update_data = calendar_utils.prepare_event_data(
-                user_id,
-                title or existing_event['summary'],
-                start or existing_event['start'].get('dateTime', existing_event['start'].get('date')),
-                end or existing_event['end'].get('dateTime', existing_event['end'].get('date')),
-                description if description is not None else existing_event.get('description'),
-                location if location is not None else existing_event.get('location'),
-                reminders,
-                recurrence if recurrence is not None else existing_event.get('recurrence'),
-                local_timezone
-            )
-
-            # Remove any fields that weren't specified in the update
-            if title is None:
-                update_data.pop('summary', None)
-            if start is None and end is None:
-                update_data.pop('start', None)
-                update_data.pop('end', None)
-            if description is None:
-                update_data.pop('description', None)
-            if location is None:
-                update_data.pop('location', None)
-            if reminders is None:
-                update_data.pop('reminders', None)
-                update_data.pop('extendedProperties', None)
-            if recurrence is None:
-                update_data.pop('recurrence', None)
-
-            result = calendar_utils.update_calendar_event(user_id, event_id, update_data, update_series, local_timezone)
-
-            if result["success"]:
-                return {"success": True, "event": result["event"], "message": "Event updated successfully"}
+        if reminders:
+            if isinstance(reminders, str):
+                try:
+                    reminder_data = json.loads(reminders)
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid reminders format for user {user_id}: {reminders}")
+                    reminder_data = None
+            elif isinstance(reminders, dict):
+                reminder_data = reminders
             else:
-                return {"success": False, "message": result.get('message', 'Unknown error')}
+                logger.warning(f"Unsupported reminders format for user {user_id}: {type(reminders)}")
+                reminder_data = None
 
-        except Exception as e:
-            logger.error(f"Error in update_event: {str(e)}", exc_info=True)
-            return {"success": False, "message": f"Error updating event: {str(e)}"}
-
-    @staticmethod
-    async def fetch_events(
-        user_id: str,
-        max_results: int = 10,
-        time_min: Optional[str] = None,
-        time_max: Optional[str] = None,
-        local_timezone: Optional[str] = None
-    ) -> Dict[str, Any]:
-        try:
-            calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
-            
-            if not local_timezone:
-                local_timezone = UserDataManager.get_user_timezone(user_id)
-
-            tz = pytz.timezone(local_timezone)
-            now = datetime.now(tz)
-
-            if not time_min:
-                time_min = now.isoformat()
-            if not time_max:
-                time_max = (now + timedelta(days=1)).isoformat()
-
-            events_data = calendar_utils.fetch_upcoming_events(user_id, max_results, time_min, time_max, local_timezone)
-
-            if not events_data.get('items', []):
-                return {"success": True, "message": "No upcoming events found.", "events": []}
-
-            event_list = []
-            for event in events_data['items']:
-                event_summary = {
-                    'id': event['id'],
-                    'title': event['summary'],
-                    'start': event['start'].get('dateTime', event['start'].get('date')),
-                    'end': event['end'].get('dateTime', event['end'].get('date')),
-                    'description': event.get('description', ''),
-                    'location': event.get('location', ''),
-                    'reminders': []
+            if reminder_data:
+                event['reminders'] = {
+                    'useDefault': False,
+                    'overrides': reminder_data.get('overrides', [])
                 }
 
-                # Handle standard reminders
-                if 'reminders' in event and 'overrides' in event['reminders']:
-                    for reminder in event['reminders']['overrides']:
-                        event_summary['reminders'].append({
-                            'type': reminder['method'],
-                            'minutes': reminder['minutes']
-                        })
+        return event
 
-                # Handle custom reminders from extended properties
-                if 'extendedProperties' in event and 'private' in event['extendedProperties']:
-                    custom_reminders = event['extendedProperties']['private'].get('customReminders')
-                    if custom_reminders:
-                        try:
-                            custom_reminders_list = json.loads(custom_reminders)
-                            event_summary['reminders'].extend(custom_reminders_list)
-                        except json.JSONDecodeError:
-                            logger.warning(f"Invalid JSON in customReminders for event {event['id']}")
 
-                # Handle recurrence
-                if 'recurrence' in event:
-                    event_summary['recurrence'] = event['recurrence']
-
-                event_list.append(event_summary)
-
-            return {"success": True, "events": event_list}
-
-        except Exception as e:
-            logger.error(f"Error in fetch_events: {str(e)}", exc_info=True)
-            return {"success": False, "message": f"Error fetching events: {str(e)}"}
-        
     @staticmethod
-    async def delete_event(
-        user_id: str,
-        event_id: str,
-        delete_series: bool = False
-    ) -> Dict[str, Any]:
+    def check_conflicts(user_id: str, start: Dict[str, Any], end: Dict[str, Any], event_id: Optional[str] = None, local_timezone: str = 'UTC') -> Dict[str, Any]:
         try:
-            calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
-
-            calendar_id = calendar_utils.get_or_create_user_calendar(user_id)
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
             if not calendar_id:
-                return {"success": False, "message": "Unable to get or create user calendar"}
+                return {"success": False, "message": "Failed to get user calendar"}
 
-            try:
-                event = calendar_utils.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-                
-                if delete_series and 'recurringEventId' in event:
-                    # This is part of a recurring series, so we'll delete the series
-                    series_id = event['recurringEventId']
-                    result = calendar_utils.delete_calendar_event(user_id, series_id)
-                    message = f"Event series deleted successfully. ID: {series_id}"
-                else:
-                    # Delete the specific instance or non-recurring event
-                    result = calendar_utils.delete_calendar_event(user_id, event_id)
-                    message = f"Event deleted successfully. ID: {event_id}"
+            tz = pytz.timezone(local_timezone)
+            start_dt = parse_datetime(start['dateTime'], tz)
+            end_dt = parse_datetime(end['dateTime'], tz)
 
-                if result["success"]:
-                    return {"success": True, "message": message}
-                else:
-                    return {"success": False, "message": f"Failed to delete event: {result.get('message', 'Unknown error')}"}
+            # Fetch events within the time range
+            events_result = calendar_service.events().list(
+                calendarId=calendar_id,
+                timeMin=start_dt.isoformat(),
+                timeMax=end_dt.isoformat(),
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
 
-            except HttpError as e:
-                if e.resp.status == 410:
-                    return {"success": True, "message": f"Event (ID: {event_id}) has already been deleted."}
-                else:
-                    logger.error(f"HttpError in delete_event: {str(e)}", exc_info=True)
-                    return {"success": False, "message": f"Error deleting event: {str(e)}"}
+            conflicts = []
+            for event in events_result.get('items', []):
+                if event['id'] == event_id:
+                    continue  # Skip the event being updated
 
+                event_start = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), tz)
+                event_end = parse_datetime(event['end'].get('dateTime', event['end'].get('date')), tz)
+
+                if (start_dt < event_end and end_dt > event_start):
+                    conflicts.append({
+                        'id': event['id'],
+                        'summary': event['summary'],
+                        'start': event['start'],
+                        'end': event['end']
+                    })
+
+            if conflicts:
+                return {
+                    "success": False,
+                    "message": "Conflicting events found",
+                    "conflicts": conflicts,
+                    "available_slots": EventManagementUtils.find_available_slots(user_id, start_dt, end_dt, local_timezone)
+                }
+
+            return {"success": True}
         except Exception as e:
-            logger.error(f"Error in delete_event: {str(e)}", exc_info=True)
-            return {"success": False, "message": f"Error deleting event: {str(e)}"}
+            logger.error(f"Error checking conflicts: {str(e)}", exc_info=True)
+            return {"success": False, "message": str(e)}
+    
+    @staticmethod
+    def find_available_slots(user_id: str, start_dt: datetime, end_dt: datetime, local_timezone: str) -> List[Dict[str, str]]:
+        calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+        if not calendar_id:
+            return []
+
+        tz = pytz.timezone(local_timezone)
+        events_result = calendar_service.events().list(
+            calendarId=calendar_id,
+            timeMin=start_dt.isoformat(),
+            timeMax=(end_dt + timedelta(days=7)).isoformat(),  # Look for slots up to a week after the requested end time
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+
+        events = events_result.get('items', [])
+        available_slots = []
+        current_slot_start = start_dt
+
+        for event in events:
+            event_start = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), tz)
+            if current_slot_start < event_start:
+                available_slots.append({
+                    'start': current_slot_start.isoformat(),
+                    'end': event_start.isoformat()
+                })
+            current_slot_start = parse_datetime(event['end'].get('dateTime', event['end'].get('date')), tz)
+
+        if current_slot_start < end_dt:
+            available_slots.append({
+                'start': current_slot_start.isoformat(),
+                'end': end_dt.isoformat()
+            })
+
+        return available_slots
+
+    @staticmethod
+    def create_calendar_event(user_id: str, event_data: Dict[str, Any], local_timezone: str) -> Dict[str, Any]:
+        try:
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return {"success": False, "message": "Failed to get or create user calendar"}
+
+            event = calendar_service.events().insert(calendarId=calendar_id, body=event_data).execute()
+            logger.info(f"Event created: {event.get('htmlLink')}")
+            return {"success": True, "event": event}
+        except Exception as e:
+            logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
+            return {"success": False, "message": str(e)}
+        
+# Ensure that parse_datetime is updated to handle timezone
+def parse_datetime(dt_str: str, timezone: pytz.timezone) -> datetime:
+    dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+    return timezone.localize(dt.replace(tzinfo=None))

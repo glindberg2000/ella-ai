@@ -4,29 +4,41 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
 # Add the current directory to sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
 
 # Import app from main, and get API_KEY from environment
 from main import app, API_KEY
-from dotenv import load_dotenv
+from utils import UserDataManager, EventManagementUtils
+from ella_dbo.models import Event, ConflictInfo, EventResponse, ScheduleEventRequest, UpdateEventData, UpdateEventRequest, ReminderRequest, EmailRequest
+
+# Load environment variables
 load_dotenv()
 
 REAL_USER_ID = os.getenv("TEST_MEMGPT_USER_ID")
 REAL_USER_TIMEZONE = os.getenv("TEST_USER_TIMEZONE", "UTC")
 
-# Import after environment is loaded
-from utils import UserDataManager, EventManagementUtils
-
 @pytest.fixture
 def client():
     return TestClient(app)
+
+@pytest.fixture
+def real_event_data():
+    now = datetime.now()
+    start_time = now + timedelta(hours=1)
+    end_time = start_time + timedelta(hours=1)
+    return Event(
+        summary="Real Test Event",
+        start={"dateTime": start_time.isoformat(), "timeZone": "America/Los_Angeles"},
+        end={"dateTime": end_time.isoformat(), "timeZone": "America/Los_Angeles"},
+        description="This is a real test event",
+        location="Real Test Location",
+        reminders={"useDefault": False, "overrides": [{"method": "email", "minutes": 15}]}
+    )
 
 @pytest.fixture
 def mock_user_data():
@@ -48,20 +60,6 @@ def mock_event_data():
         "location": "Test Location",
         "reminders": '[{"method": "email", "minutes": 30}]',
         "recurrence": "RRULE:FREQ=DAILY;COUNT=3"
-    }
-
-@pytest.fixture
-def real_event_data():
-    now = datetime.now()
-    start_time = now + timedelta(hours=1)
-    end_time = start_time + timedelta(hours=1)
-    return {
-        "summary": "Real Test Event",
-        "start_time": start_time.isoformat(),
-        "end_time": end_time.isoformat(),
-        "description": "This is a real test event",
-        "location": "Real Test Location",
-        "reminders": '[{"method": "email", "minutes": 15}]'
     }
 
 def test_schedule_event_mock(client, mock_user_data, mock_event_data):
@@ -91,27 +89,18 @@ def test_schedule_event_mock(client, mock_user_data, mock_event_data):
 
 @pytest.mark.skipif(not REAL_USER_ID, reason="Real user ID not provided")
 def test_schedule_event_real(client, real_event_data):
+    request_data = ScheduleEventRequest(user_id=REAL_USER_ID, event=real_event_data)
     response = client.post(
         "/schedule_event",
-        json={
-            "user_id": REAL_USER_ID,
-            "event": real_event_data
-        },
+        json=request_data.dict(),
         headers={"X-API-Key": API_KEY}
     )
 
     assert response.status_code == 200
     response_data = response.json()
-    
-    if response_data["success"]:
-        assert "id" in response_data["event"]
-        assert response_data["event"]["summary"] == real_event_data["summary"]
-    else:
-        assert "conflict_info" in response_data
-        assert "available_slots" in response_data["conflict_info"]
-        assert "message" in response_data["conflict_info"]
-
-    return response_data  # Return the response data
+    assert response_data["success"] == True
+    assert "id" in response_data["event"]
+    assert response_data["event"]["summary"] == real_event_data.summary
 
 @pytest.mark.skipif(not REAL_USER_ID, reason="Real user ID not provided")
 def test_update_event_real(client, real_event_data):
@@ -145,7 +134,7 @@ def test_update_event_real(client, real_event_data):
     assert response_data["success"] == True
     assert response_data["event"]["summary"] == "Updated Real Test Event"
     assert response_data["event"]["description"] == "This is an updated real test event"
-    
+
 @pytest.mark.skipif(not REAL_USER_ID, reason="Real user ID not provided")
 def test_fetch_events_real(client):
     response = client.get(
