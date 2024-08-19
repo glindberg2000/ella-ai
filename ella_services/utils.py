@@ -40,13 +40,24 @@ class UserDataManager:
             logger.debug(f"Attempting to retrieve user data for ID: {memgpt_user_id}")
             user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
             if user_data:
-                logger.debug(f"User data retrieved successfully: {user_data}")
-                # Ensure all required fields are present
+                logger.debug(f"Raw user data retrieved: {user_data}")
+                
+                # Map database fields to expected fields
+                mapped_data = {
+                    'email': user_data.get('email'),
+                    'memgpt_api_key': user_data.get('memgpt_user_api_key'),
+                    'agent_key': user_data.get('default_agent_key'),
+                    'local_timezone': user_data.get('local_timezone', 'UTC')
+                }
+                
+                # Check for missing or empty required fields
                 required_fields = ['email', 'memgpt_api_key', 'agent_key']
                 for field in required_fields:
-                    if field not in user_data or not user_data[field]:
+                    if not mapped_data.get(field):
                         logger.warning(f"Missing or empty required field '{field}' for user {memgpt_user_id}")
-                return user_data
+                        logger.debug(f"Database value for {field}: {user_data.get(field)}")
+                
+                return mapped_data
             else:
                 logger.warning(f"No user data found for ID: {memgpt_user_id}")
                 return None
@@ -66,10 +77,19 @@ class EventManagementUtils:
     @staticmethod
     async def schedule_event(user_id: str, event_data: Dict[str, Any], user_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            user_timezone = user_data.get('local_timezone', 'UTC')
+            user_timezone = str(user_data.get('local_timezone', 'UTC'))
+            logger.debug(f"User timezone: {user_timezone}")
+            
             if not is_valid_timezone(user_timezone):
                 logger.warning(f"Invalid timezone for user {user_id}: {user_timezone}. Using default.")
                 user_timezone = 'UTC'
+
+            # Ensure event_data timezones are strings
+            for time_field in ['start', 'end']:
+                if 'timeZone' in event_data[time_field]:
+                    logger.debug(f"Original {time_field} timeZone: {event_data[time_field]['timeZone']}")
+                    event_data[time_field]['timeZone'] = str(event_data[time_field]['timeZone'])
+                    logger.debug(f"Converted {time_field} timeZone: {event_data[time_field]['timeZone']}")
 
             # Get or create user's calendar
             calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
@@ -88,6 +108,7 @@ class EventManagementUtils:
                 event_data.get('recurrence'),
                 user_timezone
             )
+            logger.debug(f"Prepared event: {prepared_event}")
 
             # Check for conflicts
             conflict_check = EventManagementUtils.check_conflicts(user_id, event_data['start'], event_data['end'], local_timezone=user_timezone)
@@ -106,7 +127,7 @@ class EventManagementUtils:
         except Exception as e:
             logger.error(f"Error scheduling event: {str(e)}", exc_info=True)
             return {"success": False, "message": str(e)}
-        
+
     @staticmethod
     def get_or_create_user_calendar(user_id: str) -> Optional[str]:
         try:
@@ -160,16 +181,16 @@ class EventManagementUtils:
             'summary': summary,
             'location': location,
             'description': description,
-            'start': start,
-            'end': end,
+            'start': start.copy(),  # Create a copy to avoid modifying the original dict
+            'end': end.copy(),  # Create a copy to avoid modifying the original dict
         }
 
-        # Ensure start and end have the same format (dateTime)
+        # Ensure start and end have the same format (dateTime) and string timezone
         for time_field in ['start', 'end']:
             if 'dateTime' not in event[time_field]:
                 event[time_field]['dateTime'] = event[time_field].get('date')
-            if 'timeZone' not in event[time_field]:
-                event[time_field]['timeZone'] = local_timezone
+            if 'timeZone' not in event[time_field] or not isinstance(event[time_field]['timeZone'], str):
+                event[time_field]['timeZone'] = str(local_timezone)
 
         if recurrence:
             event['recurrence'] = [recurrence]
@@ -194,6 +215,7 @@ class EventManagementUtils:
                 }
 
         return event
+
 
     @staticmethod
     def check_conflicts(user_id: str, start: Dict[str, Any], end: Dict[str, Any], event_id: Optional[str] = None, local_timezone: str = 'UTC') -> Dict[str, Any]:
@@ -243,7 +265,7 @@ class EventManagementUtils:
         except Exception as e:
             logger.error(f"Error checking conflicts: {str(e)}", exc_info=True)
             return {"success": False, "message": str(e)}
-    
+
     @staticmethod
     def find_available_slots(user_id: str, start_dt: datetime, end_dt: datetime, local_timezone: str) -> List[Dict[str, str]]:
         calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
@@ -287,13 +309,31 @@ class EventManagementUtils:
             if not calendar_id:
                 return {"success": False, "message": "Failed to get or create user calendar"}
 
+            # Ensure the time zone is in the correct format
+            valid_timezones = pytz.all_timezones
+            if local_timezone not in valid_timezones:
+                logger.warning(f"Invalid timezone: {local_timezone}. Defaulting to UTC.")
+                local_timezone = 'UTC'
+
+            # Update the event data with the correct time zone
+            for time_field in ['start', 'end']:
+                if 'dateTime' in event_data[time_field]:
+                    dt = parse_datetime(event_data[time_field]['dateTime'], local_timezone)
+                    event_data[time_field]['dateTime'] = dt.isoformat()
+                    event_data[time_field]['timeZone'] = local_timezone
+
+            logger.debug(f"Sending event data to Google Calendar API: {event_data}")
+
             event = calendar_service.events().insert(calendarId=calendar_id, body=event_data).execute()
             logger.info(f"Event created: {event.get('htmlLink')}")
             return {"success": True, "event": event}
+        except HttpError as e:
+            logger.error(f"HTTP error creating calendar event: {str(e)}", exc_info=True)
+            return {"success": False, "message": str(e)}
         except Exception as e:
             logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": str(e)}
-
+            
     @staticmethod
     async def fetch_events(
         user_id: str,
@@ -592,16 +632,30 @@ class GoogleEmailUtils:
 import pytz
 from datetime import datetime
 
-def parse_datetime(dt_str: str, timezone_str: str) -> datetime:
+def parse_datetime(dt_str: str, timezone_str: Union[str, pytz.tzinfo.BaseTzInfo]) -> datetime:
     dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-    timezone = pytz.timezone(timezone_str)
+    if isinstance(timezone_str, str):
+        timezone = pytz.timezone(timezone_str)
+    elif isinstance(timezone_str, pytz.tzinfo.BaseTzInfo):
+        timezone = timezone_str
+    else:
+        raise ValueError(f"Invalid timezone type: {type(timezone_str)}")
+    
     if dt.tzinfo is None:
         return timezone.localize(dt)
     return dt.astimezone(timezone)
 
+import pytz
+
 def is_valid_timezone(timezone_str):
+    logger.debug(f"Checking timezone validity: {timezone_str}")
+    if isinstance(timezone_str, pytz.tzinfo.BaseTzInfo):
+        logger.debug(f"Timezone is a pytz.tzinfo.BaseTzInfo object")
+        return True
     try:
-        pytz.timezone(timezone_str)
+        pytz.timezone(str(timezone_str))
+        logger.debug(f"Timezone {timezone_str} is valid")
         return True
     except pytz.exceptions.UnknownTimeZoneError:
+        logger.warning(f"Unknown timezone: {timezone_str}")
         return False

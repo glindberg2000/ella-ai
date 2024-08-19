@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 import json
 from dotenv import load_dotenv
+import pytz
 
 
 
@@ -72,6 +73,19 @@ async def schedule_event(request: ScheduleEventRequest, api_key: str = Depends(g
 
         # Prepare event data
         event_data = request.event.model_dump(exclude_unset=True)
+        
+        # Ensure timezone is a string and set it if not provided
+        user_timezone = user_data.get('local_timezone', 'UTC')
+        if user_timezone not in pytz.all_timezones:
+            logger.warning(f"Invalid user timezone: {user_timezone}. Defaulting to UTC.")
+            user_timezone = 'UTC'
+
+        for time_field in ['start', 'end']:
+            if 'dateTime' in event_data[time_field]:
+                if 'timeZone' not in event_data[time_field]:
+                    event_data[time_field]['timeZone'] = user_timezone
+                event_data[time_field]['timeZone'] = str(event_data[time_field]['timeZone'])
+
         logger.debug(f"Prepared event data: {event_data}")
         
         # Schedule the event
@@ -248,22 +262,19 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def send_reminder(reminder: ReminderRequest):
     logger.info(f"Received reminder request: {reminder}")
     try:
-        # Fetch user data using UserDataManager
         user_data = UserDataManager.get_user_data(reminder.user_id)
         if not user_data:
             logger.error(f"User not found: {reminder.user_id}")
             raise HTTPException(status_code=404, detail=f"User not found: {reminder.user_id}")
 
-        # Get user's email and other details from user data
         to_email = user_data.get('email')
         memgpt_user_api_key = user_data.get('memgpt_api_key')
         agent_key = user_data.get('agent_key')
 
-        if not to_email or not memgpt_user_api_key or not agent_key:
-            logger.error(f"Incomplete user data for user: {reminder.user_id}")
-            raise HTTPException(status_code=400, detail="Incomplete user data")
+        if not to_email:
+            logger.error(f"Email not found for user: {reminder.user_id}")
+            raise HTTPException(status_code=400, detail="User email not found")
 
-        subject = f"Reminder: {reminder.event_summary}"
         context = {
             "event_summary": reminder.event_summary,
             "event_start": reminder.event_start,
@@ -272,33 +283,27 @@ async def send_reminder(reminder: ReminderRequest):
             "minutes_before": reminder.minutes_before
         }
 
-        logger.info(f"Calling email_router.send_reminder with context: {context}")
-        result = await email_router.send_reminder(
+        result = await email_router.generate_and_send_email(
             to_email=to_email,
-            subject=subject,
-            reminder_content=context,
+            subject=f"Reminder: {reminder.event_summary}",
+            context=context,
             memgpt_user_api_key=memgpt_user_api_key,
-            agent_key=agent_key
+            agent_key=agent_key,
+            is_reply=False
         )
-        logger.info(f"Result from email_router.send_reminder: {result}")
 
         if result['status'] == 'success':
-            logger.info(f"Reminder sent successfully to {result['to_email']}. Message ID: {result.get('message_id')}")
             return {
                 "success": True,
                 "message": "Reminder sent successfully",
                 "message_id": result.get('message_id'),
-                "recipient": result['to_email']
+                "recipient": to_email
             }
         else:
-            error_message = f"Failed to send reminder to {result.get('to_email', 'unknown recipient')}: {result['message']}"
-            logger.error(error_message)
-            raise HTTPException(status_code=500, detail=error_message)
+            raise HTTPException(status_code=500, detail=result['message'])
     except Exception as e:
-        error_message = f"Error in send_reminder endpoint: {str(e)}"
-        logger.error(error_message, exc_info=True)
-        raise HTTPException(status_code=500, detail=error_message)
-
+        logger.error(f"Error in send_reminder endpoint: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 @app.get("/debug/user/{user_id}")
 async def debug_user_data(user_id: str, api_key: str = Depends(get_api_key)):
     user_data = UserDataManager.get_user_data(user_id)
@@ -306,7 +311,7 @@ async def debug_user_data(user_id: str, api_key: str = Depends(get_api_key)):
         return {"user_found": True, "user_data": user_data}
     else:
         return {"user_found": False}
-           
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(

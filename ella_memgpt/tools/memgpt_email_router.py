@@ -41,23 +41,29 @@ class MemGPTEmailRouter:
         self.auth_email = google_service_manager.get_auth_email()
 
     async def generate_and_send_email(self, 
-                                      to_email: str, 
-                                      subject: str, 
-                                      context: Dict[str, str], 
-                                      memgpt_user_api_key: str, 
-                                      agent_key: str, 
-                                      message_id: Optional[str] = None,
-                                      instruction_template: Optional[str] = None,
-                                      html_content: Optional[str] = None,
-                                      attachments: Optional[List[str]] = None,
-                                      is_reply: bool = True) -> None:
-        if is_reply or instruction_template:
-            email_content = await self._generate_content(context, memgpt_user_api_key, agent_key, instruction_template)
-            if not email_content:
-                logger.error("Failed to generate email content")
-                return
+                                    to_email: str, 
+                                    subject: str, 
+                                    context: Dict[str, str], 
+                                    memgpt_user_api_key: Optional[str], 
+                                    agent_key: Optional[str], 
+                                    message_id: Optional[str] = None,
+                                    instruction_template: Optional[str] = None,
+                                    html_content: Optional[str] = None,
+                                    attachments: Optional[List[str]] = None,
+                                    is_reply: bool = True) -> Dict[str, Any]:
+        logger.info(f"Generating and sending email to: {to_email}")
+        
+        if (is_reply or instruction_template) and memgpt_user_api_key and agent_key:
+            try:
+                email_content = await self._generate_content(context, memgpt_user_api_key, agent_key, instruction_template)
+                if not email_content:
+                    raise ValueError("Failed to generate email content")
+            except Exception as e:
+                logger.error(f"Error generating content: {str(e)}. Falling back to default template.")
+                email_content = self._default_email_template(context)
         else:
-            email_content = context.get('body', '')
+            logger.info("Using pre-written content or default template")
+            email_content = context.get('body') or self._default_email_template(context)
 
         result = self._send_email(
             to_email=to_email,
@@ -74,6 +80,18 @@ class MemGPTEmailRouter:
             logger.error(f"Failed to send email: {result['message']}")
 
         return result
+
+    def _default_email_template(self, context: Dict[str, str]) -> str:
+        return f"""
+        Dear Recipient,
+
+        This is a default email regarding: {context.get('subject', 'No subject provided')}
+
+        {context.get('body', 'No content provided')}
+
+        Best regards,
+        Automated Email System
+        """
 
     async def _generate_content(self, context: Dict[str, str], memgpt_user_api_key: str, agent_key: str, instruction_template: Optional[str] = None) -> Optional[str]:
         client = RESTClient(base_url=self.base_url, token=memgpt_user_api_key)
