@@ -115,4 +115,3 @@ def get_active_users():
         cur = conn.cursor()
         cur.execute("SELECT * FROM users WHERE memgpt_user_id IS NOT NULL")
         return [dict(row) for row in cur.fetchall()]
-

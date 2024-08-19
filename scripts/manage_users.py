@@ -50,7 +50,7 @@ def delete_field(database, table, row_id, field):
 
 def main():
     parser = argparse.ArgumentParser(description='List and manage the users table in a SQLite database.')
-    parser.add_argument('--database', type=str, default='database.db', help='The path to the SQLite database file (default: database.db).')
+    parser.add_argument('--database', type=str, default='../ella_dbo/database.db', help='The path to the SQLite database file (default: database.db).')
     parser.add_argument('--table', type=str, default='users', help='The table name from which to delete (default: users).')
 
     args = parser.parse_args()

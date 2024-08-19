@@ -118,7 +118,7 @@ async def poll_gmail_notifications() -> None:
                                         memgpt_user_api_key=memgpt_user_api_key,
                                         agent_key=default_agent_key,
                                         message_id=message_id,
-                                        is_reply=True  # Ensure we're treating this as a reply
+                                        #is_reply=True  # Ensure we're treating this as a reply
                                     )
                                 else:
                                     logger.warning(f"User not found or default agent key missing for email: {from_email}")

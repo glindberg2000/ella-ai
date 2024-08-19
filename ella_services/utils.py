@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pytz
 import json
 import logging
+from ella_dbo.models import Event
 from dotenv import load_dotenv
 
 # Add the parent directory to sys.path
@@ -21,7 +22,7 @@ load_dotenv()
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-from google_utils import GoogleCalendarUtils, is_valid_timezone, parse_datetime
+#from google_utils import GoogleCalendarUtils, is_valid_timezone, parse_datetime
 from google_service_manager import google_service_manager
 from memgpt_email_router import email_router
 from voice_call_manager import VoiceCallManager
@@ -29,24 +30,25 @@ from ella_dbo.db_manager import get_user_data_by_field
 
 # Initialize utilities
 calendar_service = google_service_manager.get_calendar_service()
-calendar_utils = GoogleCalendarUtils(calendar_service)
+#calendar_utils = GoogleCalendarUtils(calendar_service)
 voice_call_manager = VoiceCallManager()
 
 class UserDataManager:
     @staticmethod
     def get_user_data(memgpt_user_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve all data for a given user."""
         try:
             logger.debug(f"Attempting to retrieve user data for ID: {memgpt_user_id}")
             user_data = get_user_data_by_field('memgpt_user_id', memgpt_user_id)
             if user_data:
                 logger.debug(f"User data retrieved successfully: {user_data}")
+                # Ensure all required fields are present
+                required_fields = ['email', 'memgpt_api_key', 'agent_key']
+                for field in required_fields:
+                    if field not in user_data or not user_data[field]:
+                        logger.warning(f"Missing or empty required field '{field}' for user {memgpt_user_id}")
                 return user_data
             else:
                 logger.warning(f"No user data found for ID: {memgpt_user_id}")
-                # Debug: Print all users in the database
-                all_users = get_user_data_by_field('memgpt_user_id', None)  # Assuming this returns all users if field is None
-                logger.debug(f"All users in database: {all_users}")
                 return None
         except Exception as e:
             logger.error(f"Error retrieving user data: {str(e)}", exc_info=True)
@@ -193,7 +195,6 @@ class EventManagementUtils:
 
         return event
 
-
     @staticmethod
     def check_conflicts(user_id: str, start: Dict[str, Any], end: Dict[str, Any], event_id: Optional[str] = None, local_timezone: str = 'UTC') -> Dict[str, Any]:
         try:
@@ -292,8 +293,315 @@ class EventManagementUtils:
         except Exception as e:
             logger.error(f"Error creating calendar event: {str(e)}", exc_info=True)
             return {"success": False, "message": str(e)}
-        
+
+    @staticmethod
+    async def fetch_events(
+        user_id: str,
+        max_results: int = 10,
+        time_min: Optional[str] = None,
+        time_max: Optional[str] = None,
+        local_timezone: str = 'UTC'
+    ) -> Dict[str, Any]:
+        try:
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return {"success": False, "message": "Failed to get user calendar"}
+
+            tz = pytz.timezone(local_timezone)
+            now = datetime.now(tz)
+
+            if time_min:
+                time_min = parse_datetime(time_min, tz)
+            else:
+                time_min = now
+
+            if time_max:
+                time_max = parse_datetime(time_max, tz)
+            else:
+                time_max = now + timedelta(days=30)  # Default to 30 days from now
+
+            events_result = calendar_service.events().list(
+                calendarId=calendar_id,
+                timeMin=time_min.isoformat(),
+                timeMax=time_max.isoformat(),
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+
+            events = events_result.get('items', [])
+            formatted_events: List[Dict[str, Any]] = []
+
+            for event in events:
+                formatted_event = Event(
+                    id=event['id'],
+                    summary=event['summary'],
+                    start=event['start'],
+                    end=event['end'],
+                    description=event.get('description', ''),
+                    location=event.get('location', ''),
+                    reminders=event.get('reminders', {}),
+                    recurrence=event.get('recurrence', []),
+                    local_timezone=local_timezone
+                )
+                formatted_events.append(formatted_event.dict())
+
+            return {
+                "success": True,
+                "events": formatted_events,
+                "nextPageToken": events_result.get('nextPageToken')
+            }
+        except Exception as e:
+            logger.error(f"Error fetching events: {str(e)}", exc_info=True)
+            return {"success": False, "message": str(e)}
+
+    @staticmethod
+    async def delete_event(
+        user_id: str,
+        event_id: str,
+        delete_series: bool = False
+    ) -> str:
+        try:
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return "Failed to get user calendar"
+
+            if delete_series:
+                # To delete a recurring event series, we need to fetch the event first
+                event = calendar_service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+                if 'recurringEventId' in event:
+                    event_id = event['recurringEventId']
+
+            calendar_service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+            return f"Event {event_id} deleted successfully"
+        except Exception as e:
+            logger.error(f"Error deleting event: {str(e)}", exc_info=True)
+            return f"Error deleting event: {str(e)}"
+
+    @staticmethod
+    async def update_event(
+        user_id: str,
+        event_id: str,
+        title: Optional[str] = None,
+        start: Optional[Dict[str, Any]] = None,
+        end: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        reminders: Optional[Dict[str, Any]] = None,
+        recurrence: Optional[List[str]] = None,
+        update_series: bool = False,
+        local_timezone: str = 'America/Los_Angeles'
+    ) -> str:
+        try:
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                return json.dumps({"success": False, "message": "Failed to get user calendar"})
+
+            # Fetch the existing event
+            event = calendar_service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+            # Prepare the update data
+            update_data = {}
+            if title is not None:
+                update_data['summary'] = title
+            else:
+                # If title is not provided, use the existing summary
+                update_data['summary'] = event.get('summary', '')
+            
+            if start is not None:
+                update_data['start'] = start
+            if end is not None:
+                update_data['end'] = end
+            if description is not None:
+                update_data['description'] = description
+            if location is not None:
+                update_data['location'] = location
+            if reminders is not None:
+                update_data['reminders'] = reminders
+            if recurrence is not None:
+                update_data['recurrence'] = recurrence
+
+            # Update the event
+            updated_event = calendar_service.events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=update_data
+            ).execute()
+
+            return json.dumps({"success": True, "event": updated_event})
+        except Exception as e:
+            logger.error(f"Error updating event: {str(e)}", exc_info=True)
+            return json.dumps({"success": False, "message": str(e)})
+        # @staticmethod
+        # async def update_event(
+        #     user_id: str,
+        #     event_id: str,
+        #     title: Optional[str] = None,
+        #     start: Optional[Dict[str, Any]] = None,
+        #     end: Optional[Dict[str, Any]] = None,
+        #     description: Optional[str] = None,
+        #     location: Optional[str] = None,
+        #     reminders: Optional[Dict[str, Any]] = None,
+        #     recurrence: Optional[List[str]] = None,
+        #     update_series: bool = False,
+        #     local_timezone: str = 'UTC'
+        # ) -> str:
+        #     try:
+        #         calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+        #         if not calendar_id:
+        #             return json.dumps({"success": False, "message": "Failed to get user calendar"})
+
+        #         # Fetch the existing event
+        #         event = calendar_service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+        #         # Prepare the update data
+        #         update_data = {}
+        #         if title is not None:
+        #             update_data['summary'] = title
+        #         if start is not None:
+        #             update_data['start'] = start
+        #         if end is not None:
+        #             update_data['end'] = end
+        #         if description is not None:
+        #             update_data['description'] = description
+        #         if location is not None:
+        #             update_data['location'] = location
+        #         if reminders is not None:
+        #             update_data['reminders'] = reminders
+        #         if recurrence is not None:
+        #             update_data['recurrence'] = recurrence
+
+
+        #         # Check for conflicts if start or end time is being updated
+        #         if start is not None or end is not None:
+        #             conflict_check = EventManagementUtils.check_conflicts(
+        #                 user_id,
+        #                 update_data.get('start', event['start']),
+        #                 update_data.get('end', event['end']),
+        #                 event_id,
+        #                 local_timezone
+        #             )
+        #             if not conflict_check["success"]:
+        #                 return json.dumps(conflict_check)
+
+        #         # Update the event
+        #         updated_event = calendar_service.events().update(
+        #             calendarId=calendar_id,
+        #             eventId=event_id,
+        #             body=update_data
+        #         ).execute()
+
+        #         return json.dumps({"success": True, "event": updated_event})
+        #     except Exception as e:
+        #         logger.error(f"Error updating event: {str(e)}", exc_info=True)
+        #         return json.dumps({"success": False, "message": str(e)})
+
+    @staticmethod
+    def check_reminder_status(user_id: str, event_id: str, reminder_key: str) -> bool:
+        try:
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                logger.error(f"Failed to get calendar for user {user_id}")
+                return False
+
+            event = google_service_manager.get_calendar_service().events().get(
+                calendarId=calendar_id,
+                eventId=event_id
+            ).execute()
+
+            sent_reminders = json.loads(event.get('extendedProperties', {}).get('private', {}).get('sentReminders', '[]'))
+            return reminder_key in sent_reminders
+        except Exception as e:
+            logger.error(f"Error checking reminder status: {str(e)}", exc_info=True)
+            return False
+
+    @staticmethod
+    def update_reminder_status(user_id: str, event_id: str, reminder_key: str) -> bool:
+        try:
+            calendar_id = EventManagementUtils.get_or_create_user_calendar(user_id)
+            if not calendar_id:
+                logger.error(f"Failed to get calendar for user {user_id}")
+                return False
+
+            event = google_service_manager.get_calendar_service().events().get(
+                calendarId=calendar_id,
+                eventId=event_id
+            ).execute()
+
+            if 'extendedProperties' not in event:
+                event['extendedProperties'] = {'private': {}}
+            elif 'private' not in event['extendedProperties']:
+                event['extendedProperties']['private'] = {}
+
+            sent_reminders = json.loads(event['extendedProperties']['private'].get('sentReminders', '[]'))
+            if reminder_key not in sent_reminders:
+                sent_reminders.append(reminder_key)
+
+            event['extendedProperties']['private']['sentReminders'] = json.dumps(sent_reminders)
+
+            updated_event = google_service_manager.get_calendar_service().events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event
+            ).execute()
+
+            return 'sentReminders' in updated_event.get('extendedProperties', {}).get('private', {})
+        except Exception as e:
+            logger.error(f"Error updating reminder status: {str(e)}", exc_info=True)
+            return False
+
+class GoogleEmailUtils:
+    @staticmethod
+    def send_email(memgpt_user_id: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, str]:
+        try:
+            user_data = UserDataManager.get_user_data(memgpt_user_id)
+            if not user_data:
+                logger.error(f"No user data found for user ID: {memgpt_user_id}")
+                return {"status": "failed", "message": "No valid user data available."}
+
+            recipient_email = user_data.get('email')
+            if not recipient_email:
+                logger.error(f"No email found for user ID: {memgpt_user_id}")
+                return {"status": "failed", "message": "No valid recipient email address available."}
+
+            result = email_router.generate_and_send_email_sync(
+                to_email=recipient_email,
+                subject=subject,
+                context={"body": body},
+                memgpt_user_api_key=user_data.get('memgpt_user_api_key'),
+                agent_key=user_data.get('default_agent_key'),
+                message_id=message_id,
+                is_reply=bool(message_id)
+            )
+            
+            if result['status'] == 'success':
+                logger.info(f"Message sent to user {memgpt_user_id} ({recipient_email}): {result['message_id']}")
+            else:
+                logger.error(f"Error sending email to user {memgpt_user_id}: {result['message']}")
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error sending email for user {memgpt_user_id}: {str(e)}", exc_info=True)
+            return {"status": "failed", "message": str(e)}
+
 # Ensure that parse_datetime is updated to handle timezone
-def parse_datetime(dt_str: str, timezone: pytz.timezone) -> datetime:
+# def parse_datetime(dt_str: str, timezone: pytz.timezone) -> datetime:
+#     dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+#     return timezone.localize(dt.replace(tzinfo=None))
+
+import pytz
+from datetime import datetime
+
+def parse_datetime(dt_str: str, timezone_str: str) -> datetime:
     dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-    return timezone.localize(dt.replace(tzinfo=None))
+    timezone = pytz.timezone(timezone_str)
+    if dt.tzinfo is None:
+        return timezone.localize(dt)
+    return dt.astimezone(timezone)
+
+def is_valid_timezone(timezone_str):
+    try:
+        pytz.timezone(timezone_str)
+        return True
+    except pytz.exceptions.UnknownTimeZoneError:
+        return False

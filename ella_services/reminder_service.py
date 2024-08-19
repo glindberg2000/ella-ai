@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import asyncio
+import aiohttp
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
@@ -16,11 +17,11 @@ from googleapiclient.errors import HttpError
 #from setup_env import setup_env
 from memgpt.client.client import RESTClient
 
-from google_utils import GoogleCalendarUtils, is_valid_timezone, parse_datetime
+# from google_utils import GoogleCalendarUtils, is_valid_timezone, parse_datetime
 from memgpt_email_router import MemGPTEmailRouter
 from voice_call_manager import VoiceCallManager
+from utils import UserDataManager, EventManagementUtils, is_valid_timezone, parse_datetime
 from google_service_manager import google_service_manager
-from utils import UserDataManager, EventManagementUtils
 
 
 # Constants
@@ -62,11 +63,13 @@ voice_call_manager = VoiceCallManager()
 # FastAPI app
 reminder_app = FastAPI()
 
-calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
-
+#calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
+calendar_utils = EventManagementUtils()
 
 
 # ... (previous imports and code remain the same)
+
+from utils import parse_datetime
 
 def format_event_summary(event: Dict[str, Any], user_timezone: str, current_time: datetime, user_data: Dict[str, Any]) -> str:
     start_time = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), user_timezone)
@@ -94,33 +97,8 @@ def format_event_summary(event: Dict[str, Any], user_timezone: str, current_time
     
     return summary
 
-async def send_reminder_via_api(user_id: str, event: dict, reminder: dict, user_timezone: str):
-    url = f"{API_BASE_URL}/send_reminder"
-    headers = {
-        "X-API-Key": API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "user_id": user_id,
-        "event_id": event['id'],
-        "event_summary": event['summary'],
-        "event_start": event['start'].get('dateTime', event['start'].get('date')),
-        "event_end": event['end'].get('dateTime', event['end'].get('date')),
-        "event_description": event.get('description', ''),
-        "reminder_type": reminder['alert_type'],
-        "minutes_before": reminder['minutes']
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as response:
-            if response.status == 200:
-                result = await response.json()
-                logger.info(f"Reminder sent successfully for event {event['id']}")
-                return result
-            else:
-                error_text = await response.text()
-                logger.error(f"Failed to send reminder. Status: {response.status}, Error: {error_text}")
-                return None
+import pytz
+from datetime import datetime, timedelta
 
 async def poll_calendar_for_events():
     logger.info("Starting Calendar polling task")
@@ -142,27 +120,46 @@ async def poll_calendar_for_events():
                     logger.warning(f"Invalid timezone for user {memgpt_user_id}: {user_timezone}. Using default.")
                     user_timezone = 'America/Los_Angeles'
                 
-                events = await calendar_utils.fetch_upcoming_events(memgpt_user_id, max_results=10, time_min=None, time_max=None, local_timezone=user_timezone)
-                current_time = datetime.now(pytz.timezone(user_timezone))
+                events_result = await EventManagementUtils.fetch_events(
+                    user_id=memgpt_user_id,
+                    max_results=10,
+                    time_min=None,
+                    time_max=None,
+                    local_timezone=user_timezone
+                )
                 
-                for event in events.get('items', []):
-                    reminders = process_reminders(event, user_timezone, current_time, user_data)
-                    for reminder in reminders:
-                        alert_time = reminder['alert_time']
-                        if current_time <= alert_time <= (current_time + timedelta(minutes=5)):
-                            reminder_key = f"{reminder['alert_type']}_{reminder['minutes']}"
-                            
-                            if not calendar_utils.check_reminder_status(memgpt_user_id, event['id'], reminder_key):
-                                result = await send_reminder_via_api(memgpt_user_id, event, reminder, user_timezone)
-                                if result and result.get('success'):
-                                    if calendar_utils.update_reminder_status(memgpt_user_id, event['id'], reminder_key):
-                                        logger.info(f"Sent and recorded reminder: {reminder_key} for event {event['id']}")
+                if events_result['success']:
+                    events = events_result['events']
+                    current_time = datetime.now(pytz.timezone(user_timezone))
+                    
+                    for event in events:
+                        event_summary = format_event_summary(event, user_timezone, current_time, user_data)
+                        logger.info(f"Processing event: {event_summary}")
+                        
+                        reminders = process_reminders(event, user_timezone, current_time, user_data)
+                        for reminder in reminders:
+                            alert_time = reminder['alert_time']
+                            if current_time <= alert_time <= (current_time + timedelta(minutes=5)):
+                                reminder_key = f"{reminder['alert_type']}_{reminder['minutes']}"
+                                
+                                if not EventManagementUtils.check_reminder_status(memgpt_user_id, event['id'], reminder_key):
+                                    user_debug_data = await debug_user_data(memgpt_user_id)
+                                    if user_debug_data:
+                                        logger.debug(f"User data debug info: {user_debug_data}")
                                     else:
-                                        logger.warning(f"Sent reminder but failed to record status: {reminder_key} for event {event['id']}")
+                                        logger.error(f"Failed to fetch debug data for user {memgpt_user_id}")
+                                    result = await send_reminder_via_api(memgpt_user_id, event, reminder, user_timezone)
+                                    if result and result.get('success'):
+                                        if EventManagementUtils.update_reminder_status(memgpt_user_id, event['id'], reminder_key):
+                                            logger.info(f"Sent and recorded reminder: {reminder_key} for event {event['id']}")
+                                        else:
+                                            logger.warning(f"Sent reminder but failed to record status: {reminder_key} for event {event['id']}")
+                                    else:
+                                        logger.error(f"Failed to send reminder via API for event {event['id']}")
                                 else:
-                                    logger.error(f"Failed to send reminder via API for event {event['id']}")
-                            else:
-                                logger.info(f"Reminder already sent: {reminder_key} for event {event['id']}")
+                                    logger.info(f"Reminder already sent: {reminder_key} for event {event['id']}")
+                else:
+                    logger.error(f"Failed to fetch events for user {memgpt_user_id}: {events_result.get('message', 'Unknown error')}")
         
         except Exception as e:
             logger.error(f"Error during polling: {str(e)}", exc_info=True)
@@ -170,6 +167,47 @@ async def poll_calendar_for_events():
         logger.info("Finished checking for upcoming events. Waiting for 1 minute before the next check.")
         await asyncio.sleep(60)  # Check every 1 minute
 
+async def debug_user_data(user_id: str):
+    url = f"{API_BASE_URL}/debug/user/{user_id}"
+    headers = {"X-API-Key": API_KEY}
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                return await response.json()
+            else:
+                return None
+
+async def send_reminder_via_api(user_id: str, event: dict, reminder: dict, user_timezone: str):
+    url = f"{API_BASE_URL}/send_reminder"
+    headers = {
+        "X-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "user_id": user_id,
+        "event_id": event['id'],
+        "event_summary": event['summary'],
+        "event_start": event['start'].get('dateTime', event['start'].get('date')),
+        "event_end": event['end'].get('dateTime', event['end'].get('date')),
+        "event_description": event.get('description', ''),
+        "reminder_type": reminder['alert_type'],
+        "minutes_before": reminder['minutes']
+    }
+
+    logger.debug(f"Sending reminder payload: {payload}")
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as response:
+            if response.status == 200:
+                result = await response.json()
+                logger.info(f"Reminder sent successfully for event {event['id']}")
+                return result
+            else:
+                error_text = await response.text()
+                logger.error(f"Failed to send reminder. Status: {response.status}, Error: {error_text}")
+                return None
 def convert_to_utc_time(local_time_str, timezone='America/Los_Angeles'):
     return parse_datetime(local_time_str, timezone).astimezone(pytz.UTC)
 

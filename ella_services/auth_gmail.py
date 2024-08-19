@@ -1,9 +1,11 @@
 import os
+import sys
 from google_auth_oauthlib.flow import InstalledAppFlow
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 import logging
+import argparse
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +25,11 @@ GMAIL_SCOPES = [
 ]
 
 # Initiate the OAuth flow to obtain new credentials for Gmail
-def obtain_gmail_credentials():
+def obtain_gmail_credentials(delete_cred_file=False):
+    if delete_cred_file and os.path.exists(GMAIL_TOKEN_PATH):
+        logging.info("Deleting existing credentials file.")
+        os.remove(GMAIL_TOKEN_PATH)
+
     creds = None
     if os.path.exists(GMAIL_TOKEN_PATH):
         logging.info("Loading existing credentials from gmail_token.json")
@@ -51,6 +57,11 @@ def obtain_gmail_credentials():
     return creds
 
 if __name__ == "__main__":
+    # Set up argument parsing for the delete_cred_file flag
+    parser = argparse.ArgumentParser(description="Obtain or refresh Gmail credentials.")
+    parser.add_argument('--d', action='store_true', help="Delete the credentials file before obtaining new credentials.")
+    args = parser.parse_args()
+
     # Run the function to obtain or refresh credentials
-    creds = obtain_gmail_credentials()
+    creds = obtain_gmail_credentials(delete_cred_file=args.d)
     logging.info("Script completed successfully.")
