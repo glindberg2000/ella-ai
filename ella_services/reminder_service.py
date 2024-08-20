@@ -106,7 +106,6 @@ async def poll_calendar_for_events():
     while True:
         logger.info("Polling for upcoming events...")
         try:
-            google_service_manager.refresh_credentials()
             active_users = get_active_users()
             for user in active_users:
                 memgpt_user_id = user['memgpt_user_id']
@@ -120,12 +119,20 @@ async def poll_calendar_for_events():
                     logger.warning(f"Invalid timezone for user {memgpt_user_id}: {user_timezone}. Using default.")
                     user_timezone = 'America/Los_Angeles'
                 
+                # Get the Calendar service, refreshing credentials if necessary
+                calendar_service = google_service_manager.get_calendar_service()
+
+                if not calendar_service:
+                    logger.error("Failed to retrieve Calendar service.")
+                    continue  # Skip this user and move to the next one
+
                 events_result = await EventManagementUtils.fetch_events(
                     user_id=memgpt_user_id,
                     max_results=10,
                     time_min=None,
                     time_max=None,
-                    local_timezone=user_timezone
+                    local_timezone=user_timezone,
+                    #service=calendar_service  # Ensure fetch_events accepts this parameter
                 )
                 
                 if events_result['success']:

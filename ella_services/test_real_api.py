@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 import sys
 
-
+# To run must these test and not the whole dirctory: pytest test_real_api.py -v -s
 # Load environment variables from .env
 load_dotenv()
 

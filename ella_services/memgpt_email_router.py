@@ -35,6 +35,7 @@ class MemGPTEmailRouter:
         self.auth_email = google_service_manager.get_auth_email()
         logger.info(f"MemGPTEmailRouter initialized with base_url: {self.base_url}")
 
+
     async def send_direct_email(self, to_email: str, subject: str, body: str, message_id: Optional[str] = None) -> Dict[str, Any]:
         logger.info(f"Preparing to send direct email to: {to_email}")
         try:
