@@ -105,6 +105,7 @@ async def poll_gmail_notifications() -> None:
                                         memgpt_user_api_key=memgpt_user_api_key,
                                         agent_key=default_agent_key,
                                         message_id=message_id,
+                                        api_key=API_KEY  # Add API key here
                                     )
                                 else:
                                     logger.warning(f"User not found or default agent key missing for email: {from_email}")
@@ -124,7 +125,6 @@ async def poll_gmail_notifications() -> None:
     except Exception as e:
         logger.error(f"Error during Gmail polling: {str(e)}")
         await asyncio.sleep(60)
-
 def extract_email_address(from_field: str) -> str:
     _, email_address = parseaddr(from_field)
     if not email_address:

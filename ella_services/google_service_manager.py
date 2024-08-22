@@ -1,16 +1,19 @@
 import os
 import json
+import time
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 import logging
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timedelta
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
-# Constants
+# Constants (same as before)
 CREDENTIALS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ella_memgpt', 'credentials'))
 GMAIL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gmail_token.json')
 GCAL_TOKEN_PATH = os.path.join(CREDENTIALS_PATH, 'gcal_token.json')
@@ -38,16 +41,41 @@ class GoogleServiceManager:
             return cls._instance
 
     def _initialize_services(self):
-        self.gmail_service = None
-        self.calendar_service = None
         self.gmail_credentials = None
         self.calendar_credentials = None
+        self.gmail_service = None
+        self.calendar_service = None
         self.auth_email = None
-        self._refresh_services()
+        self._refresh_gmail_service()
+        self._refresh_calendar_service()
+
+    def _refresh_gmail_service(self):
+        try:
+            self.gmail_credentials = self._load_and_refresh_credentials(GMAIL_TOKEN_PATH, GMAIL_SCOPES, 'Gmail')
+            if self.gmail_credentials:
+                self.gmail_service = build("gmail", "v1", credentials=self.gmail_credentials)
+                self.auth_email = self._get_auth_email()
+            else:
+                logger.warning("Gmail credentials are not available.")
+        except Exception as e:
+            logger.error(f"Error refreshing Gmail service: {str(e)}")
+            self.gmail_service = None
+
+    def _refresh_calendar_service(self):
+        try:
+            self.calendar_credentials = self._load_and_refresh_credentials(GCAL_TOKEN_PATH, GCAL_SCOPES, 'Calendar')
+            if self.calendar_credentials:
+                self.calendar_service = build("calendar", "v3", credentials=self.calendar_credentials)
+            else:
+                logger.warning("Calendar credentials are not available.")
+        except Exception as e:
+            logger.error(f"Error refreshing Calendar service: {str(e)}")
+            self.calendar_service = None
+
 
     def _refresh_services(self):
-        self.gmail_credentials = self._load_credentials(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
-        self.calendar_credentials = self._load_credentials(GCAL_TOKEN_PATH, GCAL_SCOPES)
+        self.gmail_credentials = self._load_and_refresh_credentials(GMAIL_TOKEN_PATH, GMAIL_SCOPES, 'Gmail')
+        self.calendar_credentials = self._load_and_refresh_credentials(GCAL_TOKEN_PATH, GCAL_SCOPES, 'Calendar')
         
         if self.gmail_credentials:
             self.gmail_service = build("gmail", "v1", credentials=self.gmail_credentials)
@@ -56,59 +84,90 @@ class GoogleServiceManager:
         
         self.auth_email = self._get_auth_email()
 
-    def _load_credentials(self, token_path, scopes):
-        if not os.path.exists(token_path):
-            logger.warning(f"Token file not found at {token_path}. Initiating new token flow.")
-            return self._get_new_credentials(token_path, scopes)
-
-        creds = Credentials.from_authorized_user_file(token_path, scopes)
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(token_path, 'w') as token:
-                token.write(creds.to_json())
-            logger.info(f"Refreshed credentials for {token_path}")
+    def _load_and_refresh_credentials(self, token_path, scopes, service_name):
+        creds = None
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, scopes)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                logger.info(f"Refreshing {service_name} token...")
+                try:
+                    creds.refresh(Request())
+                    self._save_credentials(creds, token_path)
+                    logger.info(f"{service_name} token refreshed. New expiry: {creds.expiry}")
+                except Exception as e:
+                    logger.error(f"Error refreshing {service_name} token: {str(e)}")
+                    return None
+            else:
+                logger.info(f"Obtaining new {service_name} credentials...")
+                try:
+                    creds = self._get_new_credentials(token_path, scopes)
+                    logger.info(f"New {service_name} credentials obtained. Expiry: {creds.expiry}")
+                except Exception as e:
+                    logger.error(f"Error obtaining new {service_name} credentials: {str(e)}")
+                    return None
+        else:
+            logger.info(f"{service_name} token is still valid. Expiry: {creds.expiry}")
+        
         return creds
 
     def _get_new_credentials(self, token_path, scopes):
         if not os.path.exists(CLIENT_SECRET_PATH):
-            logger.error(f"Client secret file not found at {CLIENT_SECRET_PATH}")
             raise FileNotFoundError(f"Client secret file not found at {CLIENT_SECRET_PATH}")
 
-        flow = Flow.from_client_secrets_file(
-            CLIENT_SECRET_PATH,
-            scopes=scopes,
-            redirect_uri='urn:ietf:wg:oauth:2.0:oob')
-
-        auth_url, _ = flow.authorization_url(prompt='consent')
-
-        print(f'Please go to this URL and authorize the application: {auth_url}')
-        code = input('Enter the authorization code: ')
-
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
+        flow = Flow.from_client_secrets_file(CLIENT_SECRET_PATH, scopes=scopes)
+        flow.run_local_server(port=0)
         
-        logger.info(f"New credentials obtained and saved to {token_path}")
+        creds = flow.credentials
+        self._save_credentials(creds, token_path)
         return creds
 
+    def _save_credentials(self, creds, token_path):
+        with open(token_path, 'w') as token:
+            token.write(creds.to_json())
+        logger.info(f"Credentials saved to {token_path}")
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, HttpError))
+    )
     def _get_auth_email(self):
         if self.gmail_service:
             try:
                 profile = self.gmail_service.users().getProfile(userId='me').execute()
                 return profile['emailAddress']
+            except HttpError as e:
+                if e.resp.status in [403, 429]:  # Rate limiting errors
+                    logger.warning(f"Rate limit hit when retrieving auth email. Retrying...")
+                    time.sleep(5)  # Wait for 5 seconds before retry
+                    raise
+                else:
+                    logger.error(f"HTTP error retrieving authenticated email: {str(e)}")
+                    raise
             except Exception as e:
                 logger.error(f"Error retrieving authenticated email: {str(e)}", exc_info=True)
+                raise
         return None
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, HttpError))
+    )
     def get_gmail_service(self):
-        if not self.gmail_service or self.gmail_credentials.expired:
+        if not self.gmail_service or not self.gmail_credentials.valid:
             self._refresh_services()
         return self.gmail_service
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, HttpError))
+    )
     def get_calendar_service(self):
-        if not self.calendar_service or self.calendar_credentials.expired:
+        if not self.calendar_service or not self.calendar_credentials.valid:
             self._refresh_services()
         return self.calendar_service
 
@@ -117,60 +176,17 @@ class GoogleServiceManager:
             self._refresh_services()
         return self.auth_email
 
-
-
-    
-    def refresh_token(self, service):
-        if service == 'gmail':
-            creds = self.gmail_credentials
-            token_path = GMAIL_TOKEN_PATH
-            scopes = GMAIL_SCOPES
-        elif service == 'calendar':
-            creds = self.calendar_credentials
-            token_path = GCAL_TOKEN_PATH
-            scopes = GCAL_SCOPES
-        else:
-            logger.error(f"Unknown service: {service}")
-            return f"Failed to refresh: Unknown service {service}"
-
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                with open(token_path, 'w') as token:
-                    token.write(creds.to_json())
-                logger.info(f"Refreshed credentials for {service}")
-                return f"Successfully refreshed {service} token"
-            except Exception as e:
-                logger.error(f"Error refreshing {service} token: {str(e)}", exc_info=True)
-                return f"Failed to refresh {service} token: {str(e)}"
-        else:
-            logger.warning(f"No refresh needed or possible for {service}")
-            return f"No refresh needed or possible for {service}"
+    def refresh_all_tokens(self):
+        logger.info("Refreshing all tokens")
+        self._refresh_services()
 
     def get_token_expiry(self):
         gmail_expiry = self.gmail_credentials.expiry if self.gmail_credentials else None
         calendar_expiry = self.calendar_credentials.expiry if self.calendar_credentials else None
-        
-        now = datetime.utcnow()
-        gmail_time_left = gmail_expiry - now if gmail_expiry else None
-        calendar_time_left = calendar_expiry - now if calendar_expiry else None
-        
-        logger.info(f"Gmail token expires in: {gmail_time_left}")
-        logger.info(f"Calendar token expires in: {calendar_time_left}")
-        
         return {
             'gmail': gmail_expiry,
             'calendar': calendar_expiry
         }
-
-    def refresh_all_tokens(self):
-        logger.info("Refreshing all tokens")
-        gmail_result = self.refresh_token('gmail')
-        calendar_result = self.refresh_token('calendar')
-        logger.info(f"Gmail refresh result: {gmail_result}")
-        logger.info(f"Calendar refresh result: {calendar_result}")
-        self._refresh_services()
-
 
 # Create a singleton instance
 google_service_manager = GoogleServiceManager()

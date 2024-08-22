@@ -24,7 +24,7 @@ def schedule_event(
 ) -> str:
     """
     Schedule a new event in the user's Google Calendar with unified reminder support.
-    Version: 1.0.2
+    Version: 1.1.2
     Args:
         self (Agent): The agent instance calling the tool.
         user_id (str): The unique identifier for the user.
@@ -45,30 +45,56 @@ def schedule_event(
     import os
     import sys
     import json
-    from typing import Optional
+    import logging
     import requests
+    from typing import Dict, Any, Optional, List
     from dotenv import load_dotenv
+    import importlib.util
 
- 
+    # Set up logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
     # Load environment variables
     load_dotenv()
 
-    # Add project root and ella_dbo directory to sys.path
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(os.path.dirname(current_dir))
-    ella_dbo_dir = os.getenv('DB_PATH')
+    # Get the DB_PATH from environment variables and clean it
+    db_path = os.getenv('DB_PATH', '').strip("'\"")
+    if not db_path:
+        return json.dumps({"success": False, "message": "DB_PATH not set in environment variables"})
 
-    sys.path.extend([project_root, ella_dbo_dir])
+    logger.info(f"DB_PATH: {db_path}")
+
+    # Add db_path to sys.path
+    if db_path not in sys.path:
+        sys.path.append(db_path)
 
     # Import models
-    from models import Event, ScheduleEventRequest
+    try:
+        models_path = os.path.join(db_path, "models.py")
+        logger.info(f"Attempting to import models from: {models_path}")
+        spec = importlib.util.spec_from_file_location("models", models_path)
+        if spec is not None and spec.loader is not None:
+            models = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(models)
+            logger.info(f"Successfully imported models from: {models_path}")
+            Event = models.Event
+            ScheduleEventRequest = models.ScheduleEventRequest
+        else:
+            return json.dumps({"success": False, "message": f"Failed to import models from {models_path}: Invalid module specification"})
+    except Exception as e:
+        logger.error(f"Failed to import models from {models_path}: {str(e)}")
+        return json.dumps({"success": False, "message": f"Failed to import models: {str(e)}"})
 
     # Check if required environment variables are set
     API_BASE_URL = os.getenv('SERVICES_API_URL')
     API_KEY = os.getenv('API_KEY')
 
-    if not API_BASE_URL or not API_KEY or not ella_dbo_dir:
-        return json.dumps({"success": False, "message": "SERVICES_API_URL, API_KEY, or DB_PATH not set in environment variables"})
+    if not API_BASE_URL or not API_KEY:
+        return json.dumps({"success": False, "message": "SERVICES_API_URL or API_KEY not set in environment variables"})
+
+    logger.info(f"API_BASE_URL: {API_BASE_URL}")
+    logger.info(f"API_KEY: {API_KEY[:5]}...") # Log only the first 5 characters of the API key for security
 
     endpoint = f"{API_BASE_URL}/schedule_event"
 
@@ -107,17 +133,27 @@ def schedule_event(
     }
 
     try:
+        logger.info(f"Sending POST request to {endpoint}")
         response = requests.post(endpoint, json=request_data.model_dump(), headers=headers)
+        logger.info(f"Received response with status code: {response.status_code}")
+        
+        if response.status_code == 401:
+            logger.error("Received 401 Unauthorized. API Key might be invalid.")
+            return json.dumps({"success": False, "message": "API Key authentication failed. Please check your API Key."})
+        
         response.raise_for_status()
         response_json = response.json()
+        logger.info("Successfully scheduled event")
         return json.dumps(response_json)
     except requests.RequestException as e:
         error_message = f"Error scheduling event: {str(e)}"
         if hasattr(e, 'response') and e.response is not None:
             error_message += f"\nResponse status code: {e.response.status_code}"
             error_message += f"\nResponse content: {e.response.text}"
+        logger.error(error_message)
         return json.dumps({"success": False, "message": error_message})
     except json.JSONDecodeError:
+        logger.error("Invalid JSON response from server")
         return json.dumps({"success": False, "message": "Invalid JSON response from server"})
 
 def update_event(
@@ -135,8 +171,8 @@ def update_event(
     local_timezone: Optional[str] = None
 ) -> str:
     """
-    Update an existing event in the user's Google Calendar.
-    Version: 1.0.3
+    Update an existing event in the user's calendar.
+    Version: 1.0.61
     Args:
         self (Agent): The agent instance calling the tool.
         user_id (str): The unique identifier for the user.
@@ -150,7 +186,6 @@ def update_event(
         recurrence (Optional[str]): New recurrence rule in RRULE format.
         update_series (bool): If True, update the entire event series if the event is part of a recurring series.
         local_timezone (Optional[str]): The timezone for the event.
-
     Returns:
         str: A JSON string containing the API response.
     """
@@ -159,9 +194,7 @@ def update_event(
     import requests
     from dotenv import load_dotenv
 
- 
     load_dotenv()
-
     API_BASE_URL = os.getenv('SERVICES_API_URL')
     API_KEY = os.getenv('API_KEY')
 
@@ -169,7 +202,7 @@ def update_event(
         return json.dumps({"success": False, "message": "SERVICES_API_URL or API_KEY not set in environment variables"})
 
     endpoint = f"{API_BASE_URL}/events/{event_id}"
-
+    
     update_data = {
         "user_id": user_id,
         "event": {},
@@ -188,9 +221,18 @@ def update_event(
     if location is not None:
         update_data["event"]["location"] = location
     if reminders is not None:
-        update_data["event"]["reminders"] = json.loads(reminders)
+        reminders_data = json.loads(reminders)
+        if isinstance(reminders_data, list):
+            update_data["event"]["reminders"] = {
+                "useDefault": False,
+                "overrides": reminders_data
+            }
+        elif isinstance(reminders_data, dict):
+            update_data["event"]["reminders"] = reminders_data
     if recurrence is not None:
         update_data["event"]["recurrence"] = [recurrence] if recurrence else None
+    if local_timezone is not None:
+        update_data["event"]["local_timezone"] = local_timezone
 
     headers = {
         "X-API-Key": API_KEY,

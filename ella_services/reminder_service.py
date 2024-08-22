@@ -10,6 +10,10 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from dateutil.parser import isoparse
 import pytz
+
+from utils import parse_datetime
+
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -37,13 +41,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
 sys.path.append(project_root)
 
-print("sys.path:", sys.path)  # Debugging line to check the paths
-
-from ella_dbo.db_manager import get_user_data_by_field, get_active_users, get_db_connection
-# Continue with the rest of your imports and code...
-# Setup environment
-#setup_env()
-
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
@@ -51,8 +48,6 @@ load_dotenv()
 # Constants
 base_url = os.getenv("MEMGPT_API_URL", "http://localhost:8080")
 master_api_key = os.getenv("MEMGPT_SERVER_PASS", "ilovememgpt1")
-
-
 
 # Initialize MemGPTEmailRouter
 email_router = MemGPTEmailRouter()
@@ -66,39 +61,7 @@ reminder_app = FastAPI()
 #calendar_utils = GoogleCalendarUtils(google_service_manager.get_calendar_service())
 calendar_utils = EventManagementUtils()
 
-
-# ... (previous imports and code remain the same)
-
-from utils import parse_datetime
-
-def format_event_summary(event: Dict[str, Any], user_timezone: str, current_time: datetime, user_data: Dict[str, Any]) -> str:
-    start_time = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), user_timezone)
-    end_time = parse_datetime(event['end'].get('dateTime', event['end'].get('date')), user_timezone)
-    time_until_event = start_time - current_time
-
-    summary = f"Event: {event['summary']}\n"
-    summary += f"  Start: {start_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-    summary += f"  End: {end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-    summary += f"  Time until event: {time_until_event}\n"
-    
-    if 'description' in event:
-        summary += f"  Description: {event['description']}\n"
-    
-    if 'location' in event:
-        summary += f"  Location: {event['location']}\n"
-    
-    reminders = process_reminders(event, user_timezone, current_time, user_data)
-    if reminders:
-        summary += "  Reminders:\n"
-        for reminder in reminders:
-            summary += f"    - {reminder['alert_type']} alert {reminder['minutes']} minutes before the event\n"
-    else:
-        summary += "  No reminders set\n"
-    
-    return summary
-
-import pytz
-from datetime import datetime, timedelta
+from ella_dbo.db_manager import get_user_data_by_field, get_active_users, get_db_connection
 
 async def poll_calendar_for_events():
     logger.info("Starting Calendar polling task")
@@ -119,24 +82,10 @@ async def poll_calendar_for_events():
                     logger.warning(f"Invalid timezone for user {memgpt_user_id}: {user_timezone}. Using default.")
                     user_timezone = 'America/Los_Angeles'
                 
-                # Get the Calendar service, refreshing credentials if necessary
-                calendar_service = google_service_manager.get_calendar_service()
-
-                if not calendar_service:
-                    logger.error("Failed to retrieve Calendar service.")
-                    continue  # Skip this user and move to the next one
-
-                events_result = await EventManagementUtils.fetch_events(
-                    user_id=memgpt_user_id,
-                    max_results=10,
-                    time_min=None,
-                    time_max=None,
-                    local_timezone=user_timezone,
-                    #service=calendar_service  # Ensure fetch_events accepts this parameter
-                )
+                events_result = await fetch_upcoming_events_for_user(memgpt_user_id, user_timezone)
                 
-                if events_result['success']:
-                    events = events_result['events']
+                if events_result.get('success'):
+                    events = events_result.get('events', [])
                     current_time = datetime.now(pytz.timezone(user_timezone))
                     
                     for event in events:
@@ -150,11 +99,6 @@ async def poll_calendar_for_events():
                                 reminder_key = f"{reminder['alert_type']}_{reminder['minutes']}"
                                 
                                 if not EventManagementUtils.check_reminder_status(memgpt_user_id, event['id'], reminder_key):
-                                    user_debug_data = await debug_user_data(memgpt_user_id)
-                                    if user_debug_data:
-                                        logger.debug(f"User data debug info: {user_debug_data}")
-                                    else:
-                                        logger.error(f"Failed to fetch debug data for user {memgpt_user_id}")
                                     result = await send_reminder_via_api(memgpt_user_id, event, reminder, user_timezone)
                                     if result and result.get('success'):
                                         if EventManagementUtils.update_reminder_status(memgpt_user_id, event['id'], reminder_key):
@@ -174,16 +118,31 @@ async def poll_calendar_for_events():
         logger.info("Finished checking for upcoming events. Waiting for 1 minute before the next check.")
         await asyncio.sleep(60)  # Check every 1 minute
 
-async def debug_user_data(user_id: str):
-    url = f"{API_BASE_URL}/debug/user/{user_id}"
+async def fetch_upcoming_events_for_user(user_id: str, user_timezone: str) -> dict:
+    time_min = datetime.now(pytz.timezone(user_timezone)).isoformat()
+    time_max = (datetime.now(pytz.timezone(user_timezone)) + timedelta(days=1)).isoformat()
+    logger.info(f"Fetching events for user {user_id} between {time_min} and {time_max}")
+    
+    url = f"{API_BASE_URL}/events"
+    params = {
+        "user_id": user_id,
+        "max_results": 10,
+        "time_min": time_min,
+        "time_max": time_max,
+        "local_timezone": user_timezone
+    }
     headers = {"X-API-Key": API_KEY}
     
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, params=params, headers=headers) as response:
             if response.status == 200:
-                return await response.json()
+                events = await response.json()
+                logger.info(f"Fetched events for user {user_id}")
+                return {"success": True, "events": events}
             else:
-                return None
+                error_text = await response.text()
+                logger.error(f"Failed to fetch events. Status: {response.status}, Error: {error_text}")
+                return {"success": False, "message": f"Failed to fetch events: {error_text}"}
 
 async def send_reminder_via_api(user_id: str, event: dict, reminder: dict, user_timezone: str):
     url = f"{API_BASE_URL}/send_reminder"
@@ -215,25 +174,23 @@ async def send_reminder_via_api(user_id: str, event: dict, reminder: dict, user_
                 error_text = await response.text()
                 logger.error(f"Failed to send reminder. Status: {response.status}, Error: {error_text}")
                 return None
+
+async def debug_user_data(user_id: str):
+    url = f"{API_BASE_URL}/debug/user/{user_id}"
+    headers = {"X-API-Key": API_KEY}
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                return await response.json()
+            else:
+                return None
+
 def convert_to_utc_time(local_time_str, timezone='America/Los_Angeles'):
     return parse_datetime(local_time_str, timezone).astimezone(pytz.UTC)
 
 def convert_to_local_time(utc_time_str, timezone='America/Los_Angeles'):
     return parse_datetime(utc_time_str, 'UTC').astimezone(pytz.timezone(timezone))
-
-async def fetch_upcoming_events_for_user(user_id: str, user_timezone: str) -> dict:
-    time_min = datetime.now(pytz.timezone(user_timezone)).isoformat()
-    time_max = (datetime.now(pytz.timezone(user_timezone)) + timedelta(days=1)).isoformat()
-    logger.info(f"Fetching events for user {user_id} between {time_min} and {time_max}")
-    try:
-        events = calendar_utils.fetch_upcoming_events(user_id, max_results=10, time_min=time_min, time_max=time_max, local_timezone=user_timezone)
-        #logger.info(f"Fetched events for user {user_id}: {events}")
-        logger.info(f"Fetched events for user {user_id}")
-        return events
-    except Exception as e:
-        logger.error(f"Error fetching events for user {user_id}: {str(e)}")
-        return {"items": []}
-
 
 def process_reminders(event: Dict[str, Any], user_timezone: str, current_time: datetime, user_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     processed_reminders = []
@@ -274,7 +231,6 @@ def process_reminders(event: Dict[str, Any], user_timezone: str, current_time: d
         add_reminder(int(immediate_reminder_minutes), 'popup')
 
     return processed_reminders
-
 
 async def send_alert_to_llm(
     event: Dict[str, Any], 
@@ -385,7 +341,31 @@ async def send_voice_alert(event: Dict[str, Any], reminder_content: str, memgpt_
     except Exception as e:
         logger.error(f"Failed to send voice reminder for event {event['summary']}: {str(e)}", exc_info=True)
 
+def format_event_summary(event: Dict[str, Any], user_timezone: str, current_time: datetime, user_data: Dict[str, Any]) -> str:
+    start_time = parse_datetime(event['start'].get('dateTime', event['start'].get('date')), user_timezone)
+    end_time = parse_datetime(event['end'].get('dateTime', event['end'].get('date')), user_timezone)
+    time_until_event = start_time - current_time
 
+    summary = f"Event: {event['summary']}\n"
+    summary += f"  Start: {start_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+    summary += f"  End: {end_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+    summary += f"  Time until event: {time_until_event}\n"
+    
+    if 'description' in event:
+        summary += f"  Description: {event['description']}\n"
+    
+    if 'location' in event:
+        summary += f"  Location: {event['location']}\n"
+    
+    reminders = process_reminders(event, user_timezone, current_time, user_data)
+    if reminders:
+        summary += "  Reminders:\n"
+        for reminder in reminders:
+            summary += f"    - {reminder['alert_type']} alert {reminder['minutes']} minutes before the event\n"
+    else:
+        summary += "  No reminders set\n"
+    
+    return summary
 
 # Update the reminder_app_lifespan to close the voice_call_manager
 @asynccontextmanager
